@@ -1,6 +1,4 @@
-// ✅ REPLACE YOUR ENTIRE FILE WITH THIS
 // File: src/contexts/POSContext.tsx
-
 import React, {
   createContext,
   useContext,
@@ -9,29 +7,100 @@ import React, {
   useRef,
   useState,
   ReactNode,
+  useCallback,
 } from "react";
-import { User, CartItem, Product, SyncStatus, Sale, POSMode, Discount } from "@/types/pos";
+import type { CartItem, Product, SyncStatus, Sale, POSMode, Discount } from "@/types/pos";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+
+/* ---------------------------------- USER TYPES --------------------------------- */
+export type Role = "admin" | "cashier";
+
+export type UserPermissions = {
+  allowRefunds: boolean;
+  allowVoid: boolean;
+  allowPriceEdit: boolean;
+  allowDiscount: boolean;
+  allowReports: boolean;
+  allowInventory: boolean;
+  allowSettings: boolean;
+  allowEditReceipt: boolean;
+};
+
+export type POSUser = {
+  id: string;
+  username: string;
+  role: Role;
+  permissions: UserPermissions;
+  pin_code?: string | null;
+
+  // convenience
+  full_name?: string;
+  name?: string;
+  active?: boolean;
+};
+
+export const ADMIN_PERMISSIONS: UserPermissions = {
+  allowRefunds: true,
+  allowVoid: true,
+  allowPriceEdit: true,
+  allowDiscount: true,
+  allowReports: true,
+  allowInventory: true,
+  allowSettings: true,
+  allowEditReceipt: true,
+};
+
+// ✅ FIX: cashier must be able to discount if you want discounts to work at the till
+export const CASHIER_DEFAULT_PERMISSIONS: UserPermissions = {
+  allowRefunds: false,
+  allowVoid: false,
+  allowPriceEdit: false,
+  allowDiscount: true, // ✅ was false (this blocked discounts)
+  allowReports: false,
+  allowInventory: false,
+  allowSettings: false,
+  allowEditReceipt: false,
+};
+
+/* ---------------------------------- TYPES --------------------------------- */
 
 export type SaleMeta = {
   receiptId: string;
   receiptNumber: string;
-  timestamp: string; // ISO
+  timestamp: string;
+};
+
+type Payment = { method: string; amount: number };
+
+type OfflineSale = {
+  cashierId: string;
+  customerName: string;
+  total: number;
+  payments: Payment[];
+  items: CartItem[];
+  meta: SaleMeta;
+  synced: boolean;
+  lastError?: string;
 };
 
 interface POSContextType {
-  currentUser: User | null;
-  setCurrentUser: (user: User | null) => void;
+  currentUser: POSUser | null;
+  setCurrentUser: (user: POSUser | null) => void;
+
+  can: (permission: keyof UserPermissions) => boolean;
 
   cart: CartItem[];
   addToCart: (product: Product, customDescription?: string, customPrice?: number) => void;
-
   removeFromCart: (lineId: string) => void;
   updateCartItemQuantity: (lineId: string, quantity: number) => void;
   updateCartItemCustom: (lineId: string, customDescription?: string, customPrice?: number) => void;
-  updateCartItemDiscount: (lineId: string, discount: number, discountType: "percentage" | "fixed") => void;
-
+  updateCartItemDiscount: (
+    lineId: string,
+    discount: number,
+    discountType: "percentage" | "fixed"
+  ) => void;
   clearCart: () => void;
 
   syncStatus: SyncStatus;
@@ -55,39 +124,38 @@ interface POSContextType {
   setActiveDiscount: (discount: Discount | null) => void;
   applyDiscountCode: (code: string) => boolean;
 
-  // ✅ upgraded: meta required for factual receipts + QR
-  completeSale: (
-    payments: { method: string; amount: number }[],
-    total: number,
-    meta: SaleMeta
-  ) => Promise<void>;
+  completeSale: (payments: Payment[], total: number, meta: SaleMeta) => Promise<void>;
 
   getSecureTime: () => Date;
 }
 
+/* -------------------------------- CONTEXT --------------------------------- */
+
 const POSContext = createContext<POSContextType | undefined>(undefined);
 
 export const usePOS = () => {
-  const context = useContext(POSContext);
-  if (!context) throw new Error("usePOS must be used within a POSProvider");
-  return context;
+  const ctx = useContext(POSContext);
+  if (!ctx) throw new Error("usePOS must be used within a POSProvider");
+  return ctx;
 };
 
-// ---- helpers ----
+/* ----------------------------- STORAGE KEYS -------------------------------- */
+
 const OFFLINE_QUEUE_KEY = "themasters_offline_queue";
 const HELD_SALES_KEY = "themasters_held_sales";
 const USER_KEY = "themasters_user";
 
+/* -------------------------------- HELPERS ---------------------------------- */
+
 const newLineId = () => `line-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const ensureLineIds = (items: any[]): CartItem[] => {
-  return (items || []).map((it: any) => ({
+const ensureLineIds = (items: any[]): CartItem[] =>
+  (items || []).map((it: any) => ({
     ...it,
     lineId: it.lineId || newLineId(),
     discountType: it.discountType || "percentage",
     discount: typeof it.discount === "number" ? it.discount : 0,
   }));
-};
 
 const safeJSONParse = <T,>(raw: string | null, fallback: T): T => {
   if (!raw) return fallback;
@@ -98,9 +166,35 @@ const safeJSONParse = <T,>(raw: string | null, fallback: T): T => {
   }
 };
 
-export const POSProvider = ({ children }: { children: ReactNode }) => {
-  const [currentUser, _setCurrentUser] = useState<User | null>(null);
+const errorToMessage = (err: any) =>
+  err?.message ||
+  err?.error_description ||
+  err?.details ||
+  (typeof err === "string" ? err : JSON.stringify(err));
 
+/* -------------------------- STOCK DECREMENT RPC ---------------------------- */
+
+const decrementStockForItems = async (items: CartItem[]) => {
+  for (const item of items) {
+    if (item.product?.type !== "good") continue;
+    const qty = Number(item.quantity) || 0;
+    if (qty <= 0) continue;
+
+    const { error } = await supabase.rpc("decrement_stock", {
+      p_product_id: item.product.id,
+      p_qty: qty,
+    });
+
+    if (error) throw error;
+  }
+};
+
+/* ------------------------------- PROVIDER ---------------------------------- */
+
+export const POSProvider = ({ children }: { children: ReactNode }) => {
+  const queryClient = useQueryClient();
+
+  const [currentUser, _setCurrentUser] = useState<POSUser | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("online");
 
@@ -114,138 +208,174 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   const syncingRef = useRef(false);
 
-  // --- 1) SESSION PERSISTENCE ---
+  /* --------------------------- SESSION PERSISTENCE -------------------------- */
+
   useEffect(() => {
-    const savedUser = localStorage.getItem(USER_KEY);
-    if (!savedUser) return;
+    const saved = localStorage.getItem(USER_KEY);
+    if (!saved) return;
     try {
-      _setCurrentUser(JSON.parse(savedUser));
-    } catch (e) {
-      console.error("Failed to parse saved user", e);
+      _setCurrentUser(JSON.parse(saved));
+    } catch {
       localStorage.removeItem(USER_KEY);
     }
   }, []);
 
-  const setCurrentUser = (user: User | null) => {
+  const setCurrentUser = (user: POSUser | null) => {
     _setCurrentUser(user);
     if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
     else localStorage.removeItem(USER_KEY);
   };
 
-  // --- 2) LOAD HELD SALES + QUEUE COUNT ---
+  const can = (permission: keyof UserPermissions) => {
+    if (!currentUser) return false;
+    if (currentUser.role === "admin") return true;
+    return !!currentUser.permissions?.[permission];
+  };
+
+  /* ---------------------- LOAD HELD SALES & QUEUE --------------------------- */
+
   useEffect(() => {
     const savedHeld = safeJSONParse<Sale[]>(localStorage.getItem(HELD_SALES_KEY), []);
-    const normalizedHeld = savedHeld.map((s: any) => ({
-      ...s,
-      items: ensureLineIds(s.items || []),
-    }));
-    setHeldSales(normalizedHeld);
+    setHeldSales(
+      savedHeld.map((s: any) => ({
+        ...s,
+        items: ensureLineIds(s.items || []),
+      }))
+    );
 
-    const savedQueue = safeJSONParse<any[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
-    setPendingSyncCount(savedQueue.length);
+    const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+    setPendingSyncCount(queue.length);
   }, []);
 
   useEffect(() => {
     localStorage.setItem(HELD_SALES_KEY, JSON.stringify(heldSales));
   }, [heldSales]);
 
-  // --- 3) ONLINE/OFFLINE + SYNC ---
-  useEffect(() => {
-    const updateStatus = async () => {
-      const isOnline = navigator.onLine;
-      setSyncStatus(isOnline ? "online" : "offline");
-      if (isOnline) await processOfflineQueue();
-    };
+  const saveToOfflineQueue = (sale: OfflineSale) => {
+    const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+    queue.push(sale);
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    setPendingSyncCount(queue.length);
+  };
 
-    window.addEventListener("online", updateStatus);
-    window.addEventListener("offline", updateStatus);
-    updateStatus();
+  const writeQueue = (queue: OfflineSale[]) => {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    setPendingSyncCount(queue.length);
+  };
 
-    return () => {
-      window.removeEventListener("online", updateStatus);
-      window.removeEventListener("offline", updateStatus);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  /* ------------------------------ OFFLINE SYNC ------------------------------ */
 
-  const processOfflineQueue = async () => {
+  const processOfflineQueue = useCallback(async () => {
     if (syncingRef.current) return;
 
-    const queue = safeJSONParse<any[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+    const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+
     if (!queue.length) {
       setPendingSyncCount(0);
       return;
     }
 
     syncingRef.current = true;
-    toast.loading(`Syncing ${queue.length} offline sales...`);
     setSyncStatus("syncing");
+    toast.loading(`Syncing ${queue.length} offline sales...`);
 
-    const failed: any[] = [];
+    const failed: OfflineSale[] = [];
 
     for (const sale of queue) {
       try {
         const saleItems = ensureLineIds(sale.items || []);
-        const saleTimestamp = sale.meta?.timestamp ? new Date(sale.meta.timestamp) : new Date();
+        const saleTime = new Date(sale.meta.timestamp);
 
-        // ✅ order header includes receipt fields
-        const { data: orderData, error: orderErr } = await supabase
+        let orderId: string | null = null;
+
+        const { data: existing } = await supabase
           .from("orders")
-          .insert({
-            cashier_id: sale.cashierId,
-            customer_name: sale.customerName,
-            total_amount: sale.total,
-            payment_method: sale.payments?.[0]?.method || "cash",
-            status: "completed",
-            created_at: saleTimestamp,
-            receipt_id: sale.meta?.receiptId,
-            receipt_number: sale.meta?.receiptNumber,
-          })
-          .select()
-          .single();
+          .select("id")
+          .eq("receipt_id", sale.meta.receiptId)
+          .maybeSingle();
 
-        if (orderErr) throw orderErr;
+        if (existing?.id) {
+          orderId = existing.id;
+        } else {
+          const { data, error } = await supabase
+            .from("orders")
+            .insert({
+              cashier_id: sale.cashierId,
+              customer_name: sale.customerName,
+              total_amount: sale.total,
+              payment_method: sale.payments[0]?.method || "cash",
+              status: "completed",
+              created_at: saleTime,
+              receipt_id: sale.meta.receiptId,
+              receipt_number: sale.meta.receiptNumber,
+            })
+            .select("id")
+            .single();
 
-        const itemsPayload = saleItems.map((item: any) => ({
-          order_id: orderData.id,
-          product_id: item.product.id,
-          product_name: item.product.name,
-          quantity: item.quantity,
-          price_at_sale: item.customPrice ?? item.product.price,
-          cost_at_sale: item.product.cost_price || 0,
-          service_note: item.customDescription || null,
-        }));
+          if (error) throw error;
+          orderId = data.id;
+        }
 
-        const { error: itemsErr } = await supabase.from("order_items").insert(itemsPayload);
-        if (itemsErr) throw itemsErr;
-      } catch (err) {
-        console.error("Sync failed for sale", err);
-        failed.push(sale);
+        await supabase.from("order_items").delete().eq("order_id", orderId);
+
+        await supabase.from("order_items").insert(
+          saleItems.map((i) => ({
+            order_id: orderId,
+            product_id: i.product.id,
+            product_name: i.product.name,
+            quantity: Number(i.quantity),
+            price_at_sale: (i as any).customPrice ?? i.product.price,
+            cost_at_sale: (i.product as any).cost_price || 0,
+            service_note: (i as any).customDescription || null,
+          }))
+        );
+
+        await decrementStockForItems(saleItems);
+        await queryClient.invalidateQueries({ queryKey: ["products"] });
+      } catch (e: any) {
+        failed.push({ ...sale, lastError: errorToMessage(e) });
       }
     }
 
-    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(failed));
-    setPendingSyncCount(failed.length);
-
+    writeQueue(failed);
     toast.dismiss();
-    if (!failed.length) {
-      setSyncStatus("online");
-      toast.success("All offline sales synced!");
-    } else {
+
+    if (failed.length) {
       setSyncStatus("error");
-      toast.error(`${failed.length} sales failed to sync.`);
+      toast.error(`${failed.length} sales failed to sync`);
+    } else {
+      setSyncStatus("online");
+      toast.success("All offline sales synced");
     }
 
     syncingRef.current = false;
-  };
+  }, [queryClient]);
 
-  // --- 4) CART (lineId-safe) ---
+  /* ---------------------------- ONLINE / OFFLINE ---------------------------- */
+
+  useEffect(() => {
+    const update = async () => {
+      const online = navigator.onLine;
+      setSyncStatus(online ? "online" : "offline");
+      if (online) await processOfflineQueue();
+    };
+
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    update();
+
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, [processOfflineQueue]);
+
+  /* ------------------------------- CART LOGIC ------------------------------- */
+
   const addToCart = (product: Product, desc?: string, price?: number) => {
     setCart((prev) => {
-      const isServiceCustom = product.type === "service" && (desc || price !== undefined);
-
-      // Services/custom always new line
-      if (isServiceCustom) {
+      const custom = (product as any).type === "service" && (desc || price !== undefined);
+      if (custom) {
         return [
           ...prev,
           {
@@ -256,18 +386,20 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
             discountType: "percentage",
             customDescription: desc,
             customPrice: price,
-          },
+          } as any,
         ];
       }
 
-      // Goods stack ONLY if same product and no custom fields
       const existing = prev.find(
-        (i) => i.product.id === product.id && !i.customDescription && i.customPrice === undefined
+        (i: any) =>
+          i.product.id === (product as any).id &&
+          !i.customDescription &&
+          i.customPrice === undefined
       );
 
       if (existing) {
-        return prev.map((i) =>
-          i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i
+        return prev.map((i: any) =>
+          i.lineId === (existing as any).lineId ? { ...i, quantity: Number(i.quantity) + 1 } : i
         );
       }
 
@@ -279,31 +411,39 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           quantity: 1,
           discount: 0,
           discountType: "percentage",
-          customDescription: desc,
-          customPrice: price,
-        },
+        } as any,
       ];
     });
   };
 
-  const removeFromCart = (lineId: string) => setCart((prev) => prev.filter((i) => i.lineId !== lineId));
+  const removeFromCart = (id: string) => setCart((prev) => prev.filter((i: any) => i.lineId !== id));
 
-  const updateCartItemQuantity = (lineId: string, qty: number) => {
-    if (qty <= 0) {
-      removeFromCart(lineId);
-      return;
-    }
-    setCart((prev) => prev.map((i) => (i.lineId === lineId ? { ...i, quantity: qty } : i)));
+  const updateCartItemQuantity = (id: string, qty: number) => {
+    if (qty <= 0) return removeFromCart(id);
+    setCart((prev) => prev.map((i: any) => (i.lineId === id ? { ...i, quantity: qty } : i)));
   };
 
-  const updateCartItemCustom = (lineId: string, desc?: string, price?: number) => {
+  const updateCartItemCustom = (id: string, desc?: string, price?: number) => {
+    if (!can("allowPriceEdit")) {
+      toast.error("Not allowed to edit prices");
+      return;
+    }
     setCart((prev) =>
-      prev.map((i) => (i.lineId === lineId ? { ...i, customDescription: desc, customPrice: price } : i))
+      prev.map((i: any) =>
+        i.lineId === id ? { ...i, customDescription: desc, customPrice: price } : i
+      )
     );
   };
 
-  const updateCartItemDiscount = (lineId: string, discount: number, type: "percentage" | "fixed") => {
-    setCart((prev) => prev.map((i) => (i.lineId === lineId ? { ...i, discount, discountType: type } : i)));
+  // ✅ IMPORTANT: this is what POSPage will call — and it WILL work now (cashier has allowDiscount=true)
+  const updateCartItemDiscount = (id: string, discount: number, type: "percentage" | "fixed") => {
+    if (!can("allowDiscount")) {
+      toast.error("Not allowed to apply discounts");
+      return;
+    }
+    setCart((prev) =>
+      prev.map((i: any) => (i.lineId === id ? { ...i, discount, discountType: type } : i))
+    );
   };
 
   const clearCart = () => {
@@ -312,23 +452,19 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     setActiveDiscount(null);
   };
 
-  // --- 5) HELD SALES ---
+  /* ------------------------------ HELD SALES -------------------------------- */
+
   const holdCurrentSale = () => {
-    if (!cart.length) return;
-    if (!currentUser) return toast.error("No cashier logged in");
+    if (!currentUser || !cart.length) return;
 
-    const normalizedItems = ensureLineIds(cart);
-
-    const subtotal = normalizedItems.reduce((sum, i) => {
+    const subtotal = cart.reduce((s: number, i: any) => {
       const price = i.customPrice ?? i.product.price;
-      const itemTotal = price * i.quantity;
-      const itemDiscount = i.discountType === "percentage" ? itemTotal * (i.discount / 100) : i.discount;
-      return sum + itemTotal - itemDiscount;
+      return s + Number(price) * Number(i.quantity);
     }, 0);
 
-    const held: Sale = {
+    const held: any = {
       id: `held-${Date.now()}`,
-      items: normalizedItems,
+      items: ensureLineIds(cart as any),
       subtotal,
       tax: 0,
       discount: 0,
@@ -343,104 +479,102 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
     setHeldSales((prev) => [...prev, held]);
     clearCart();
-    toast.info("Sale Held (F3)");
   };
 
-  const resumeSale = (id: string) => {
-    const sale = heldSales.find((s) => s.id === id);
+  const resumeSale = (saleId: string) => {
+    const sale: any = heldSales.find((s: any) => s.id === saleId);
     if (!sale) return;
 
-    setCart(ensureLineIds(sale.items as any));
+    setCart(ensureLineIds(sale.items || []) as any);
     setCustomerName(sale.customerName || "");
-    setHeldSales((prev) => prev.filter((s) => s.id !== id));
-    toast.success("Sale Resumed");
+    setHeldSales((prev) => prev.filter((s: any) => s.id !== saleId));
   };
 
-// --- 6) COMPLETE SALE (offline-first with receipt meta) ---
-const saveToOfflineQueue = (sale: any) => {
-  const queue = safeJSONParse<any[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
-  queue.push(sale);
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-  setPendingSyncCount(queue.length);
-};
+  /* ------------------------------ DISCOUNTS -------------------------------- */
 
-const completeSale: POSContextType["completeSale"] = async (payments, total, meta) => {
-  if (!currentUser) {
-    toast.error("No cashier logged in");
-    return;
-  }
-  if (!cart.length) {
-    toast.error("Cart is empty");
-    return;
-  }
+  const applyDiscountCode = (code: string) => {
+    const c = String(code || "").trim().toLowerCase();
+    if (!c) return false;
 
-  const saleData = {
-    cashierId: currentUser.id,
-    customerName,
-    total,
-    payments,
-    items: ensureLineIds(cart),
-    meta,
-    synced: false,
+    toast.message("Discount codes not configured yet");
+    return false;
   };
 
-  // Optimistic clear
-  clearCart();
+  /* ------------------------------ COMPLETE SALE ----------------------------- */
 
-  if (navigator.onLine) {
-    try {
-      const { data: order, error } = await supabase
-        .from("orders")
-        .insert({
-          cashier_id: saleData.cashierId,
-          customer_name: saleData.customerName,
-          total_amount: saleData.total,
-          payment_method: saleData.payments[0]?.method || "cash",
-          status: "completed",
-          created_at: new Date(meta.timestamp),
-          receipt_id: meta.receiptId,
-          receipt_number: meta.receiptNumber,
-        })
-        .select()
-        .single();
+  const completeSale: POSContextType["completeSale"] = async (payments, total, meta) => {
+    if (!currentUser || !cart.length) return;
 
-      if (error) throw error;
+    const saleItems = ensureLineIds(cart as any);
 
-      const itemsPayload = saleData.items.map((item: any) => ({
-        order_id: order.id,
-        product_id: item.product.id,
-        product_name: item.product.name,
-        quantity: item.quantity,
-        price_at_sale: item.customPrice ?? item.product.price,
-        cost_at_sale: item.product.cost_price || 0,
-        service_note: item.customDescription || null,
-      }));
+    const saleData: OfflineSale = {
+      cashierId: currentUser.id,
+      customerName,
+      total,
+      payments,
+      items: saleItems,
+      meta,
+      synced: false,
+    };
 
-      const { error: itemsErr } = await supabase.from("order_items").insert(itemsPayload);
-      if (itemsErr) throw itemsErr;
+    clearCart();
 
-      toast.success("Sale Saved & Synced");
-      return;
-    } catch (err) {
-      console.error("Online save failed, queueing offline", err);
-      saveToOfflineQueue(saleData);
-      toast.warning("Saved Offline (Sync failed)");
-      return;
+    if (navigator.onLine) {
+      try {
+        const { data: order, error: orderErr } = await supabase
+          .from("orders")
+          .insert({
+            cashier_id: saleData.cashierId,
+            customer_name: saleData.customerName,
+            total_amount: saleData.total,
+            payment_method: payments[0]?.method || "cash",
+            status: "completed",
+            created_at: new Date(meta.timestamp),
+            receipt_id: meta.receiptId,
+            receipt_number: meta.receiptNumber,
+          })
+          .select("id")
+          .single();
+
+        if (orderErr) throw orderErr;
+
+        const { error: itemsErr } = await supabase.from("order_items").insert(
+          saleItems.map((i: any) => ({
+            order_id: order.id,
+            product_id: i.product.id,
+            product_name: i.product.name,
+            quantity: Number(i.quantity),
+            price_at_sale: i.customPrice ?? i.product.price,
+            cost_at_sale: i.product.cost_price || 0,
+            service_note: i.customDescription || null,
+          }))
+        );
+
+        if (itemsErr) throw itemsErr;
+
+        await decrementStockForItems(saleItems);
+        await queryClient.invalidateQueries({ queryKey: ["products"] });
+
+        toast.success("Sale saved & synced");
+        return;
+      } catch (e: any) {
+        saveToOfflineQueue({ ...saleData, lastError: errorToMessage(e) });
+        toast.warning("Online save failed — saved offline");
+        return;
+      }
     }
-  }
 
-  // Offline
-  saveToOfflineQueue(saleData);
-  toast.success("Saved Offline");
-};
+    saveToOfflineQueue(saleData);
+    toast.success("Saved offline");
+  };
 
-
-  const applyDiscountCode = (_code: string) => false;
+  /* --------------------------------- VALUE --------------------------------- */
 
   const value = useMemo<POSContextType>(
     () => ({
       currentUser,
       setCurrentUser,
+      can,
       cart,
       addToCart,
       removeFromCart,

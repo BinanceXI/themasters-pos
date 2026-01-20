@@ -1,12 +1,22 @@
-import { useEffect, useState } from "react";
+// File: src/pages/VerifyReceiptPage.tsx
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { motion } from "framer-motion";
-import { XCircle, Loader2, ShieldCheck, WifiOff } from "lucide-react";
+import {
+  XCircle,
+  Loader2,
+  ShieldCheck,
+  WifiOff,
+  BadgeCheck,
+  AlertTriangle,
+  Receipt,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import themastersLogo from "@/assets/themasters-logo.png";
+import { cn } from "@/lib/utils";
 
 type OrderItem = {
   product_name: string;
@@ -26,12 +36,19 @@ type OrderRow = {
   profiles?: { full_name: string | null } | null;
 };
 
+type StoreRow = {
+  business_name?: string | null;
+};
+
+const prettyStatus = (s?: string | null) => String(s || "unknown").toLowerCase();
+const money = (n: any) => Number(n || 0).toFixed(2);
+
 export const VerifyReceiptPage = () => {
-  const { id } = useParams<{ id: string }>(); // ✅ this is receipt_id
+  const { id } = useParams<{ id: string }>(); // receipt_id
   const [order, setOrder] = useState<OrderRow | null>(null);
-  const [store, setStore] = useState<{ business_name?: string | null } | null>(null);
+  const [store, setStore] = useState<StoreRow | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
 
@@ -39,26 +56,24 @@ export const VerifyReceiptPage = () => {
     const fetchAll = async () => {
       if (!id) return;
 
-      // verification needs internet
       if (!isOnline) {
         setLoading(false);
-        setError(true);
+        setErrorMsg("offline");
+        setOrder(null);
         return;
       }
 
       try {
         setLoading(true);
-        setError(false);
+        setErrorMsg(null);
 
-        // store settings
-        const { data: storeSettings, error: storeErr } = await supabase
+        const { data: storeSettings } = await supabase
           .from("store_settings")
           .select("business_name")
           .maybeSingle();
 
-        if (!storeErr) setStore(storeSettings || null);
+        setStore((storeSettings as any) || null);
 
-        // ✅ factual lookup: receipt_id
         const { data, error: ordErr } = await supabase
           .from("orders")
           .select(
@@ -81,13 +96,17 @@ export const VerifyReceiptPage = () => {
           .eq("receipt_id", id)
           .maybeSingle();
 
-        if (ordErr || !data) throw ordErr;
+        if (ordErr || !data) {
+          setOrder(null);
+          setErrorMsg("not_found");
+          return;
+        }
 
         setOrder(data as any);
-      } catch (err) {
-        console.error(err);
-        setError(true);
+      } catch (e: any) {
+        console.error(e);
         setOrder(null);
+        setErrorMsg(e?.message || "unknown");
       } finally {
         setLoading(false);
       }
@@ -96,43 +115,75 @@ export const VerifyReceiptPage = () => {
     fetchAll();
   }, [id, isOnline]);
 
+  const status = useMemo(() => prettyStatus(order?.status), [order?.status]);
+  const isCompleted = status === "completed";
+  const isVoided = status === "voided" || status === "void";
+  const isRefunded = status === "refunded" || status === "refund";
+
+  const headerTone = isCompleted
+    ? "from-emerald-600 to-emerald-900"
+    : isVoided || isRefunded
+      ? "from-amber-600 to-amber-900"
+      : "from-slate-700 to-slate-950";
+
+  const StatusIcon = isCompleted ? BadgeCheck : isVoided || isRefunded ? AlertTriangle : Receipt;
+
   if (loading) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-slate-50 gap-4">
-        <Loader2 className="animate-spin text-primary w-10 h-10" />
-        <p className="text-sm text-muted-foreground animate-pulse">Verifying Receipt...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-white gap-4 px-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-6 py-5 w-full max-w-sm text-center">
+          <Loader2 className="animate-spin w-10 h-10 mx-auto text-white" />
+          <p className="mt-3 font-semibold">Verifying receipt…</p>
+          <p className="text-xs text-slate-300 mt-1">This needs internet.</p>
+        </div>
       </div>
     );
   }
 
-  if (error || !order) {
+  if (!order || errorMsg) {
+    const offline = errorMsg === "offline";
     return (
-      <div className="flex h-screen items-center justify-center bg-red-50 p-4">
-        <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="w-full max-w-md">
-          <Card className="border-red-200 shadow-2xl">
-            <CardContent className="flex flex-col items-center py-12 text-center">
-              <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-6">
-                {isOnline ? <XCircle className="w-10 h-10 text-red-600" /> : <WifiOff className="w-10 h-10 text-amber-600" />}
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 text-white">
+        <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full max-w-md">
+          <Card className="border-slate-800 bg-slate-900/70 shadow-2xl">
+            <CardContent className="flex flex-col items-center py-10 text-center">
+              <div
+                className={cn(
+                  "w-20 h-20 rounded-full flex items-center justify-center mb-6 border",
+                  offline
+                    ? "bg-amber-500/10 border-amber-500/30"
+                    : "bg-red-500/10 border-red-500/30"
+                )}
+              >
+                {offline ? (
+                  <WifiOff className="w-10 h-10 text-amber-300" />
+                ) : (
+                  <XCircle className="w-10 h-10 text-red-300" />
+                )}
               </div>
 
-              <h2 className="text-2xl font-bold text-red-900">{isOnline ? "Receipt Not Found" : "Offline"}</h2>
+              <h2 className="text-2xl font-bold">
+                {offline ? "Offline" : "Receipt Not Found"}
+              </h2>
 
-              <p className="text-red-600 mt-2">
-                {isOnline ? (
-                  <>
-                    The receipt ID <b className="font-mono break-all">{id}</b> does not exist in our records.
-                  </>
-                ) : (
-                  <>
-                    Receipt verification needs internet. Connect and try again.
-                    <div className="mt-3 text-xs font-mono bg-white/60 border border-red-200 px-3 py-2 rounded-lg break-all">
-                      receipt_id: {id}
-                    </div>
-                  </>
-                )}
+              <p className="text-slate-300 mt-2 text-sm">
+                {offline
+                  ? "Receipt verification needs internet. Connect and try again."
+                  : "This receipt ID does not exist in our records."}
               </p>
 
-              {isOnline && <p className="text-xs text-red-400 mt-4">If this is recent, please wait 2–5 minutes for sync.</p>}
+              <div className="mt-4 w-full text-left">
+                <div className="text-[11px] text-slate-400 mb-1">receipt_id</div>
+                <div className="text-xs font-mono break-all rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  {id}
+                </div>
+              </div>
+
+              {!offline && (
+                <p className="text-[11px] text-slate-400 mt-4">
+                  If this is very recent, wait a moment for sync.
+                </p>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -140,110 +191,156 @@ export const VerifyReceiptPage = () => {
     );
   }
 
-  const isValid = String(order.status || "").toLowerCase() === "completed";
-
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-100 to-slate-200 py-8 px-4 flex justify-center items-start">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md relative">
-        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-emerald-500 text-white px-6 py-2 rounded-full flex items-center gap-2 shadow-xl z-20 border-4 border-slate-100">
-          <ShieldCheck className="w-5 h-5" />
-          <span className="font-bold text-sm tracking-wide">{isValid ? "OFFICIAL RECEIPT" : "NOT CONFIRMED"}</span>
+    <div className="min-h-screen bg-slate-950 py-6 px-3 sm:px-4 flex justify-center">
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-md"
+      >
+        {/* TOP STATUS PILL */}
+        <div className="flex justify-center mb-3">
+          <div
+            className={cn(
+              "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold tracking-wide border shadow-lg",
+                        isCompleted
+                ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
+                : isVoided || isRefunded
+                  ? "bg-amber-500/15 text-amber-200 border-amber-500/30"
+                  : "bg-slate-500/15 text-slate-200 border-slate-500/30"
+            )}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            {isCompleted ? "OFFICIAL RECEIPT" : isVoided ? "VOIDED" : isRefunded ? "REFUNDED" : "PENDING"}
+          </div>
         </div>
 
-        <Card className="overflow-hidden shadow-2xl border-none">
-          <div className="bg-slate-900 text-white p-8 pt-12 text-center relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-500 to-transparent" />
-            <img
-              src={themastersLogo}
-              alt="Logo"
-              className="h-16 mx-auto object-contain mb-4 relative z-10"
-              style={{ filter: "brightness(0) invert(1)" }}
-            />
+        <Card className="overflow-hidden border-slate-800 bg-slate-900/70 shadow-2xl">
+          {/* HEADER */}
+          <div className={cn("p-6 sm:p-7 text-center bg-gradient-to-b", headerTone)}>
+            <div className="flex items-center justify-center gap-3">
+              <div className="h-12 w-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
+                <img
+                  src={themastersLogo}
+                  alt="TheMasters"
+                  className="h-8 w-8 object-contain"
+                  style={{ filter: "brightness(0) invert(1)" }}
+                />
+              </div>
+              <div className="text-left">
+                <div className="text-xs text-white/70">Verified by</div>
+                <div className="text-lg font-black text-white leading-tight">
+                  {store?.business_name || "TheMasters"}
+                </div>
+              </div>
+            </div>
 
-            <h1 className="text-2xl font-bold relative z-10 tracking-tight">{store?.business_name || "TheMasters"}</h1>
+            <div className="mt-4 flex flex-col items-center gap-2">
+              <div className="text-[11px] text-white/70 uppercase tracking-widest">
+                Receipt Number
+              </div>
+              <div className="font-mono text-white text-xl sm:text-2xl font-black">
+                {order.receipt_number}
+              </div>
 
-            <Badge variant="outline" className="mt-3 text-emerald-400 border-emerald-400/30 bg-emerald-400/10">
-              {isValid ? "Paid" : "Status"} • {String(order.payment_method || "").toUpperCase()}
-            </Badge>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "mt-1 border-white/20 bg-white/10 text-white",
+                  isCompleted && "border-emerald-200/30 bg-emerald-200/10 text-emerald-50"
+                )}
+              >
+                <StatusIcon className="w-3.5 h-3.5 mr-2" />
+                {status.toUpperCase()} • {String(order.payment_method || "cash").toUpperCase()}
+              </Badge>
+            </div>
           </div>
 
-          <CardContent className="space-y-6 pt-8 bg-white relative">
-            <div
-              className="absolute top-0 left-0 right-0 h-4 bg-slate-900"
-              style={{
-                maskImage:
-                  "linear-gradient(45deg, transparent 50%, black 50%), linear-gradient(-45deg, transparent 50%, black 50%)",
-                maskSize: "20px 20px",
-                maskRepeat: "repeat-x",
-                maskPosition: "bottom",
-                transform: "rotate(180deg)",
-              }}
-            />
+          {/* BODY */}
+          <CardContent className="p-5 sm:p-6 bg-slate-950/40">
+            {/* META */}
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <Meta label="Date" value={new Date(order.created_at).toLocaleDateString()} right />
+              <Meta
+                label="Time"
+                value={new Date(order.created_at).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+                right
+              />
+              <Meta label="Cashier" value={order.profiles?.full_name || "Staff"} />
+              <Meta label="Customer" value={order.customer_name || "Walk-in"} right={false} full />
+            </div>
 
-            <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-sm">
-              <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Receipt No</span>
-                <span className="font-mono font-bold text-slate-900">{order.receipt_number}</span>
-              </div>
-
-              <div className="flex flex-col text-right">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Date</span>
-                <span className="font-medium">{new Date(order.created_at).toLocaleDateString()}</span>
-              </div>
-
-              <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Cashier</span>
-                <span className="font-medium truncate">{order.profiles?.full_name || "Staff"}</span>
-              </div>
-
-              <div className="flex flex-col text-right">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Time</span>
-                <span className="font-medium">
-                  {new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </span>
-              </div>
-
-              <div className="flex flex-col col-span-2">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Customer</span>
-                <span className="font-medium">{order.customer_name || "Walk-in"}</span>
-              </div>
-
-              <div className="flex flex-col col-span-2">
-                <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Receipt ID</span>
-                <span className="font-mono text-xs break-all">{order.receipt_id}</span>
+            <div className="mt-4">
+              <div className="text-[11px] text-slate-400 mb-1">receipt_id</div>
+              <div className="text-xs font-mono break-all rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-slate-200">
+                {order.receipt_id}
               </div>
             </div>
 
-            <Separator className="my-2" />
+            <Separator className="my-5 bg-slate-800" />
 
-            <div className="space-y-3">
-              {(order.order_items || []).map((item, i) => (
-                <div key={i} className="flex justify-between items-start text-sm">
-                  <div className="flex gap-3">
-                    <span className="font-bold text-slate-400 w-4">{item.quantity}</span>
-                    <span className="text-slate-700 font-medium">{item.product_name}</span>
-                  </div>
-                  <span className="font-mono font-semibold">
-                    ${(Number(item.price_at_sale) * Number(item.quantity)).toFixed(2)}
-                  </span>
+            {/* ITEMS */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-semibold text-white">Items</div>
+                <div className="text-xs text-slate-400">
+                  {order.order_items?.length || 0} line(s)
                 </div>
-              ))}
-            </div>
-
-            <Separator className="my-2" />
-
-            <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 flex justify-between items-center">
-              <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground uppercase font-bold">Total Amount</span>
-                <span className="text-xs text-slate-400">Incl. Tax</span>
               </div>
-              <span className="text-3xl font-black text-slate-900 tracking-tight">
-                ${Number(order.total_amount).toFixed(2)}
-              </span>
+
+              <div className="space-y-2">
+                {(order.order_items || []).map((it, idx) => {
+                  const line = Number(it.price_at_sale || 0) * Number(it.quantity || 0);
+                  return (
+                    <div
+                      key={`${it.product_name}-${idx}`}
+                      className="flex items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-slate-100 font-medium truncate">
+                          {it.product_name}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {it.quantity} × {money(it.price_at_sale)}
+                        </div>
+                      </div>
+                      <div className="font-mono font-semibold text-slate-100">
+                        {money(line)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="text-center pt-4 pb-2">
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Digital Verification System</p>
+            <Separator className="my-5 bg-slate-800" />
+
+            {/* TOTAL */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-slate-400 uppercase tracking-wider">
+                  Total
+                </div>
+                <div className="text-xs text-slate-500">
+                  {isCompleted ? "Paid" : "Not confirmed"}
+                </div>
+              </div>
+              <div className="text-3xl font-black text-white font-mono">
+                {money(order.total_amount)}
+              </div>
+            </div>
+
+            {/* FOOTER */}
+            <div className="pt-5 text-center">
+              <div className="text-[10px] text-slate-500 uppercase tracking-[0.25em]">
+                Digital Verification System
+              </div>
+              <div className="mt-2 text-[11px] text-slate-400">
+                If this looks wrong, contact the store with the receipt number above.
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -251,3 +348,28 @@ export const VerifyReceiptPage = () => {
     </div>
   );
 };
+
+/* ---------------- helpers ---------------- */
+
+function Meta({
+  label,
+  value,
+  right,
+  full,
+}: {
+  label: string;
+  value: string;
+  right?: boolean;
+  full?: boolean;
+}) {
+  return (
+    <div className={cn("flex flex-col", full && "col-span-2")}>
+      <span className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
+        {label}
+      </span>
+      <span className={cn("text-slate-100 font-medium", right && "text-right")}>
+        {value}
+      </span>
+    </div>
+  );
+}

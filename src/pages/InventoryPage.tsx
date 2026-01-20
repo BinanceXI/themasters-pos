@@ -1,3 +1,4 @@
+// File: src/pages/InventoryPage.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
@@ -19,13 +20,32 @@ import {
   UploadCloud,
   WifiOff,
   CloudUpload,
+  Archive,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { usePOS } from "@/contexts/POSContext";
@@ -40,7 +60,7 @@ function isEditableTarget(el: Element | null) {
   return tag === "input" || tag === "textarea" || editable === "true";
 }
 
-const PRODUCTS_QUEUE_KEY = "themasters_products_mutation_queue_v1";
+const PRODUCTS_QUEUE_KEY = "themasters_products_mutation_queue_v2";
 
 type ProductUpsertPayload = {
   id: string;
@@ -57,11 +77,12 @@ type ProductUpsertPayload = {
   low_stock_threshold?: number | null;
   is_variable_price?: boolean | null;
   requires_note?: boolean | null;
+  is_archived?: boolean | null;
 };
 
 type OfflineMutation =
   | { kind: "upsert_product"; payload: ProductUpsertPayload; ts: number }
-  | { kind: "delete_product"; id: string; ts: number }
+  | { kind: "archive_product"; id: string; ts: number }
   | { kind: "set_stock"; id: string; stock_quantity: number; ts: number };
 
 function safeParse<T>(raw: string | null, fallback: T): T {
@@ -111,6 +132,9 @@ export const InventoryPage = () => {
   const [categoryMode, setCategoryMode] = useState<"select" | "new">("select");
   const [newCategoryName, setNewCategoryName] = useState("");
 
+  // Optional: show/hide archived (admin only)
+  const [showArchived, setShowArchived] = useState(false);
+
   const [newItem, setNewItem] = useState({
     id: "",
     name: "",
@@ -128,7 +152,11 @@ export const InventoryPage = () => {
   const { data: products = [], isLoading, isError } = useQuery({
     queryKey: ["products"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("*").order("name");
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .order("name");
+
       if (error) throw error;
 
       return (data || []).map((item: any) => ({
@@ -139,6 +167,7 @@ export const InventoryPage = () => {
         cost_price: Number(item.cost_price) || 0,
         stock_quantity: Number(item.stock_quantity) || 0,
         image: item.image_url,
+        is_archived: !!item.is_archived,
       })) as Product[];
     },
     staleTime: 1000 * 60 * 60, // 1h
@@ -146,15 +175,20 @@ export const InventoryPage = () => {
     refetchOnReconnect: true,
   });
 
+  const visibleProducts = useMemo(() => {
+    if (!isAdmin) return (products || []).filter((p: any) => !p.is_archived);
+    return showArchived ? products : (products || []).filter((p: any) => !p.is_archived);
+  }, [products, isAdmin, showArchived]);
+
   // Categories from products, plus allow "General" always
   const categories = useMemo(() => {
     const set = new Set<string>();
     set.add("General");
-    (products || []).forEach((p) => {
+    (visibleProducts || []).forEach((p: any) => {
       if (p.category) set.add(String(p.category));
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [products]);
+  }, [visibleProducts]);
 
   // ------- Seamless offline sync for inventory mutations -------
   const processQueue = useCallback(async () => {
@@ -170,12 +204,17 @@ export const InventoryPage = () => {
     for (const m of queue) {
       try {
         if (m.kind === "upsert_product") {
-          const { error } = await supabase.from("products").upsert(m.payload, { onConflict: "id" });
+          const { error } = await supabase
+            .from("products")
+            .upsert(m.payload, { onConflict: "id" });
           if (error) throw error;
         }
 
-        if (m.kind === "delete_product") {
-          const { error } = await supabase.from("products").delete().eq("id", m.id);
+        if (m.kind === "archive_product") {
+          const { error } = await supabase
+            .from("products")
+            .update({ is_archived: true })
+            .eq("id", m.id);
           if (error) throw error;
         }
 
@@ -206,7 +245,6 @@ export const InventoryPage = () => {
   useEffect(() => {
     const onOnline = () => processQueue();
     window.addEventListener("online", onOnline);
-    // try once on mount
     processQueue();
     return () => window.removeEventListener("online", onOnline);
   }, [processQueue]);
@@ -222,21 +260,26 @@ export const InventoryPage = () => {
   // ------- Filter -------
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return (products || []).filter((product) => {
-      const matchesCategory = !selectedCategory || selectedCategory === "all" || product.category === selectedCategory;
+    return (visibleProducts || []).filter((product: any) => {
+      const matchesCategory =
+        !selectedCategory ||
+        selectedCategory === "all" ||
+        product.category === selectedCategory;
+
       if (!matchesCategory) return false;
       if (!q) return true;
 
-      const shortcutHit = product.shortcutCode && product.shortcutCode.toLowerCase() === q;
+      const shortcutHit =
+        product.shortcutCode && String(product.shortcutCode).toLowerCase() === q;
       if (shortcutHit) return true;
 
       return (
-        product.name.toLowerCase().includes(q) ||
-        (!!product.sku && product.sku.toLowerCase().includes(q)) ||
-        (!!product.shortcutCode && product.shortcutCode.toLowerCase().includes(q))
+        String(product.name || "").toLowerCase().includes(q) ||
+        (!!product.sku && String(product.sku).toLowerCase().includes(q)) ||
+        (!!product.shortcutCode && String(product.shortcutCode).toLowerCase().includes(q))
       );
     });
-  }, [products, searchQuery, selectedCategory]);
+  }, [visibleProducts, searchQuery, selectedCategory]);
 
   // ------- Helpers -------
   const resetForm = () => {
@@ -271,18 +314,18 @@ export const InventoryPage = () => {
       id: product.id,
       name: product.name,
       price: (product.price ?? 0).toString(),
-      cost: (product.cost_price ?? 0).toString(),
-      stock: (product.stock_quantity ?? 0).toString(),
+      cost: ((product as any).cost_price ?? 0).toString(),
+      stock: ((product as any).stock_quantity ?? 0).toString(),
       type: (product.type as string) || "good",
-      category: product.category || "General",
-      sku: product.sku || "",
-      shortcut: product.shortcutCode || "",
+      category: (product as any).category || "General",
+      sku: (product as any).sku || "",
+      shortcut: (product as any).shortcutCode || "",
       image: (product as any).image || "",
     });
     setShowProductDialog(true);
   };
 
-  // ------- Offline-first Image Upload (online only) -------
+  // ------- Image Upload (online only) -------
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isAdmin) return toast.error("No permission");
     if (!navigator.onLine) return toast.error("Image upload needs internet");
@@ -296,10 +339,15 @@ export const InventoryPage = () => {
     const filePath = `${fileName}`;
 
     try {
-      const { error: uploadError } = await supabase.storage.from("product-images").upload(filePath, file);
+      const { error: uploadError } = await supabase.storage
+        .from("product-images")
+        .upload(filePath, file);
       if (uploadError) throw uploadError;
 
-      const { data } = supabase.storage.from("product-images").getPublicUrl(filePath);
+      const { data } = supabase.storage
+        .from("product-images")
+        .getPublicUrl(filePath);
+
       setNewItem((prev) => ({ ...prev, image: data.publicUrl }));
       toast.success("Image uploaded");
     } catch (error: any) {
@@ -318,7 +366,6 @@ export const InventoryPage = () => {
         return;
       }
 
-      // category resolution
       const finalCategory =
         categoryMode === "new" && newCategoryName.trim()
           ? newCategoryName.trim()
@@ -335,32 +382,39 @@ export const InventoryPage = () => {
         sku: (newItem.sku || "").trim() || null,
         shortcut_code: (newItem.shortcut || "").trim() || null,
         image_url: newItem.image || null,
+        is_archived: false, // ✅ make sure edits bring it back if needed
       };
 
-      // optimistic update (works offline and online)
+      // optimistic update
       queryClient.setQueryData<Product[]>(["products"], (prev) => {
         const list = prev ? [...prev] : [];
-        const idx = list.findIndex((p) => p.id === payload.id);
+        const idx = list.findIndex((p: any) => p.id === payload.id);
+
         const merged: any = {
           ...(idx >= 0 ? list[idx] : {}),
           ...payload,
           shortcutCode: payload.shortcut_code || undefined,
-          lowStockThreshold: (idx >= 0 ? (list[idx] as any).lowStockThreshold : 5) ?? 5,
+          lowStockThreshold:
+            (idx >= 0 ? (list[idx] as any).lowStockThreshold : 5) ?? 5,
           stock_quantity: Number(payload.stock_quantity) || 0,
           cost_price: Number(payload.cost_price) || 0,
           price: Number(payload.price) || 0,
           image: payload.image_url || "",
+          is_archived: !!payload.is_archived,
         };
 
         if (idx >= 0) list[idx] = merged;
         else list.unshift(merged);
 
-        return list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        return list.sort((a: any, b: any) =>
+          String(a.name || "").localeCompare(String(b.name || ""))
+        );
       });
 
-      // online: upsert now. offline: queue
       if (navigator.onLine) {
-        const { error } = await supabase.from("products").upsert(payload, { onConflict: "id" });
+        const { error } = await supabase
+          .from("products")
+          .upsert(payload, { onConflict: "id" });
         if (error) throw error;
       } else {
         enqueueMutation({ kind: "upsert_product", payload, ts: Date.now() });
@@ -370,41 +424,48 @@ export const InventoryPage = () => {
       toast.success(editingProduct ? "Product updated" : "Product added");
       setShowProductDialog(false);
       resetForm();
-      // if online, ensure data is real
       if (navigator.onLine) queryClient.invalidateQueries({ queryKey: ["products"] });
     },
     onError: (err: any) => {
       console.error(err);
       toast.error(err?.message || "Save failed");
-      // fallback refetch
       if (navigator.onLine) queryClient.invalidateQueries({ queryKey: ["products"] });
     },
   });
 
-  const deleteMutation = useMutation({
+  // ✅ ARCHIVE (instead of DELETE) -> solves FK crash forever
+  const archiveMutation = useMutation({
     mutationFn: async (id: string) => {
       if (!isAdmin) {
         toast.error("No permission");
         return;
       }
 
-      // optimistic remove
-      queryClient.setQueryData<Product[]>(["products"], (prev) => (prev || []).filter((p) => p.id !== id));
+      // optimistic: mark archived in cache
+      queryClient.setQueryData<Product[]>(["products"], (prev) => {
+        const list = prev ? [...prev] : [];
+        return list.map((p: any) =>
+          p.id === id ? { ...p, is_archived: true } : p
+        );
+      });
 
       if (navigator.onLine) {
-        const { error } = await supabase.from("products").delete().eq("id", id);
+        const { error } = await supabase
+          .from("products")
+          .update({ is_archived: true })
+          .eq("id", id);
         if (error) throw error;
       } else {
-        enqueueMutation({ kind: "delete_product", id, ts: Date.now() });
+        enqueueMutation({ kind: "archive_product", id, ts: Date.now() });
       }
     },
     onSuccess: () => {
-      toast.success("Product deleted");
+      toast.success("Product archived");
       if (navigator.onLine) queryClient.invalidateQueries({ queryKey: ["products"] });
     },
     onError: (err: any) => {
       console.error(err);
-      toast.error(err?.message || "Delete failed");
+      toast.error(err?.message || "Archive failed");
       if (navigator.onLine) queryClient.invalidateQueries({ queryKey: ["products"] });
     },
   });
@@ -419,11 +480,16 @@ export const InventoryPage = () => {
       // optimistic update
       queryClient.setQueryData<Product[]>(["products"], (prev) => {
         const list = prev ? [...prev] : [];
-        return list.map((p: any) => (p.id === id ? { ...p, stock_quantity: newStock } : p));
+        return list.map((p: any) =>
+          p.id === id ? { ...p, stock_quantity: newStock } : p
+        );
       });
 
       if (navigator.onLine) {
-        const { error } = await supabase.from("products").update({ stock_quantity: newStock }).eq("id", id);
+        const { error } = await supabase
+          .from("products")
+          .update({ stock_quantity: newStock })
+          .eq("id", id);
         if (error) throw error;
       } else {
         enqueueMutation({ kind: "set_stock", id, stock_quantity: newStock, ts: Date.now() });
@@ -443,7 +509,6 @@ export const InventoryPage = () => {
   // ------- Keyboard shortcuts -------
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // ESC closes dialogs/scanner
       if (e.key === "Escape") {
         if (showScanner) {
           e.preventDefault();
@@ -459,14 +524,12 @@ export const InventoryPage = () => {
 
       if (isEditableTarget(document.activeElement)) return;
 
-      // "/" focuses search
       if (e.key === "/") {
         e.preventDefault();
         searchRef.current?.focus();
         return;
       }
 
-      // N = add product (admin)
       if ((e.key === "n" || e.key === "N") && isAdmin) {
         e.preventDefault();
         openAddDialog();
@@ -484,7 +547,6 @@ export const InventoryPage = () => {
     toast.success("Scanned: " + code);
   };
 
-  // ------- Loading / Errors -------
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
@@ -493,16 +555,28 @@ export const InventoryPage = () => {
     );
   }
 
-  // ------- Stats -------
-  const totalRetailValue = (products || []).reduce((sum, p) => sum + (p.price || 0) * (p.stock_quantity || 0), 0);
-  const totalPotentialProfit = (products || []).reduce(
-    (sum, p) => sum + ((p.price || 0) - (p.cost_price || 0)) * (p.stock_quantity || 0),
+  // ------- Stats (only count non-archived unless admin toggled showArchived) -------
+  const statsBase = (products || []).filter((p: any) => !p.is_archived);
+
+  const totalRetailValue = statsBase.reduce(
+    (sum: number, p: any) => sum + (p.price || 0) * (p.stock_quantity || 0),
     0
   );
-  const lowStockCount = (products || []).filter(
-    (p) => p.type === "good" && (p.stock_quantity || 0) <= ((p as any).lowStockThreshold || 5)
+
+  const totalPotentialProfit = statsBase.reduce(
+    (sum: number, p: any) =>
+      sum + ((p.price || 0) - (p.cost_price || 0)) * (p.stock_quantity || 0),
+    0
+  );
+
+  const lowStockCount = statsBase.filter((p: any) => {
+    const lowThr = (p as any).lowStockThreshold || 5;
+    return p.type === "good" && (p.stock_quantity || 0) <= lowThr;
+  }).length;
+
+  const outOfStockCount = statsBase.filter(
+    (p: any) => p.type === "good" && (p.stock_quantity || 0) === 0
   ).length;
-  const outOfStockCount = (products || []).filter((p) => p.type === "good" && (p.stock_quantity || 0) === 0).length;
 
   const queuedCount = readQueue().length;
 
@@ -513,7 +587,8 @@ export const InventoryPage = () => {
         <div>
           <h1 className="text-xl md:text-2xl font-bold">Inventory Management</h1>
           <p className="text-sm text-muted-foreground">
-            {products.length} products total • Press <kbd className="bg-muted px-1 rounded">/</kbd> to search
+            {visibleProducts.length} products shown • Press{" "}
+            <kbd className="bg-muted px-1 rounded">/</kbd> to search
             {isAdmin && (
               <>
                 {" "}
@@ -547,6 +622,19 @@ export const InventoryPage = () => {
 
           {isAdmin && (
             <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setShowArchived((v) => !v)}
+              title="Show archived products"
+            >
+              <Archive className="w-4 h-4" />
+              {showArchived ? "Hide Archived" : "Show Archived"}
+            </Button>
+          )}
+
+          {isAdmin && (
+            <Button
               size="sm"
               className="gap-2 bg-primary hover:bg-blue-600 shadow-lg shadow-blue-500/20"
               onClick={openAddDialog}
@@ -565,10 +653,30 @@ export const InventoryPage = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <StatBox label="Total Value (Retail)" value={`$${totalRetailValue.toLocaleString()}`} icon={DollarSign} color="text-green-500 bg-green-500/10" />
-        <StatBox label="Total Potential Profit" value={`$${totalPotentialProfit.toLocaleString()}`} icon={Zap} color="text-blue-500 bg-blue-500/10" />
-        <StatBox label="Low Stock Alert" value={lowStockCount} icon={AlertTriangle} color="text-amber-500 bg-amber-500/10" />
-        <StatBox label="Out of Stock" value={outOfStockCount} icon={Package} color="text-red-500 bg-red-500/10" />
+        <StatBox
+          label="Total Value (Retail)"
+          value={`$${totalRetailValue.toLocaleString()}`}
+          icon={DollarSign}
+          color="text-green-500 bg-green-500/10"
+        />
+        <StatBox
+          label="Total Potential Profit"
+          value={`$${totalPotentialProfit.toLocaleString()}`}
+          icon={Zap}
+          color="text-blue-500 bg-blue-500/10"
+        />
+        <StatBox
+          label="Low Stock Alert"
+          value={lowStockCount}
+          icon={AlertTriangle}
+          color="text-amber-500 bg-amber-500/10"
+        />
+        <StatBox
+          label="Out of Stock"
+          value={outOfStockCount}
+          icon={Package}
+          color="text-red-500 bg-red-500/10"
+        />
       </div>
 
       {/* Search + Categories */}
@@ -585,7 +693,11 @@ export const InventoryPage = () => {
         </div>
 
         <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-          <Button variant={selectedCategory === null ? "default" : "outline"} size="sm" onClick={() => setSelectedCategory(null)}>
+          <Button
+            variant={selectedCategory === null ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSelectedCategory(null)}
+          >
             All
           </Button>
           {categories.map((cat) => (
@@ -619,19 +731,28 @@ export const InventoryPage = () => {
           </TableHeader>
 
           <TableBody>
-            {filteredProducts.map((product) => {
+            {filteredProducts.map((product: any) => {
               const profit = (product.price || 0) - (product.cost_price || 0);
-              const m = (product.price || 0) > 0 ? (profit / (product.price || 1)) * 100 : 0;
+              const m =
+                (product.price || 0) > 0 ? (profit / (product.price || 1)) * 100 : 0;
 
-              const low = product.type === "good" && (product.stock_quantity || 0) <= ((product as any).lowStockThreshold || 5);
-              const out = product.type === "good" && (product.stock_quantity || 0) === 0;
+              const low =
+                product.type === "good" &&
+                (product.stock_quantity || 0) <= ((product as any).lowStockThreshold || 5);
+
+              const out =
+                product.type === "good" && (product.stock_quantity || 0) === 0;
 
               return (
                 <TableRow key={product.id} className="group">
                   <TableCell>
                     <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden">
                       {(product as any).image ? (
-                        <img src={(product as any).image} alt={product.name} className="w-full h-full object-cover" />
+                        <img
+                          src={(product as any).image}
+                          alt={product.name}
+                          className="w-full h-full object-cover"
+                        />
                       ) : (
                         <ImageIcon className="w-5 h-5 text-muted-foreground opacity-50" />
                       )}
@@ -639,13 +760,24 @@ export const InventoryPage = () => {
                   </TableCell>
 
                   <TableCell>
-                    <div className="font-medium">{product.name}</div>
+                    <div className="font-medium flex items-center gap-2">
+                      {product.name}
+                      {!!product.is_archived && (
+                        <Badge variant="outline" className="text-[10px]">
+                          Archived
+                        </Badge>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground">{product.category}</div>
                   </TableCell>
 
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      {product.sku && <Badge variant="outline" className="w-fit text-[10px] font-mono">{product.sku}</Badge>}
+                      {product.sku && (
+                        <Badge variant="outline" className="w-fit text-[10px] font-mono">
+                          {product.sku}
+                        </Badge>
+                      )}
                       {(product as any).shortcutCode && (
                         <Badge className="w-fit text-[10px] font-mono bg-blue-500/10 text-blue-500 border-blue-200">
                           #{(product as any).shortcutCode}
@@ -669,7 +801,12 @@ export const InventoryPage = () => {
                   </TableCell>
 
                   <TableCell className="text-right">
-                    <div className={cn("text-xs font-medium", profit >= 0 ? "text-green-600" : "text-red-500")}>
+                    <div
+                      className={cn(
+                        "text-xs font-medium",
+                        profit >= 0 ? "text-green-600" : "text-red-500"
+                      )}
+                    >
                       {profit >= 0 ? "+" : ""}${profit.toFixed(2)}
                     </div>
                     <div className="text-[10px] text-muted-foreground">{m.toFixed(0)}%</div>
@@ -682,7 +819,11 @@ export const InventoryPage = () => {
                       <span
                         className={cn(
                           "font-mono font-medium px-2 py-1 rounded",
-                          out ? "bg-red-500/10 text-red-500" : low ? "bg-amber-500/10 text-amber-500" : "bg-muted"
+                          out
+                            ? "bg-red-500/10 text-red-500"
+                            : low
+                            ? "bg-amber-500/10 text-amber-500"
+                            : "bg-muted"
                         )}
                       >
                         {product.stock_quantity || 0}
@@ -694,7 +835,11 @@ export const InventoryPage = () => {
                     {isAdmin && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
                             <MoreVertical className="w-4 h-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -707,11 +852,18 @@ export const InventoryPage = () => {
                           {product.type === "good" && (
                             <DropdownMenuItem
                               onClick={() => {
-                                const raw = prompt("Enter new stock quantity:", String(product.stock_quantity || 0));
+                                const raw = prompt(
+                                  "Enter new stock quantity:",
+                                  String(product.stock_quantity || 0)
+                                );
                                 if (raw === null) return;
                                 const parsed = Number(raw);
-                                if (!Number.isFinite(parsed) || parsed < 0) return toast.error("Invalid stock number");
-                                adjustStockMutation.mutate({ id: product.id, newStock: Math.floor(parsed) });
+                                if (!Number.isFinite(parsed) || parsed < 0)
+                                  return toast.error("Invalid stock number");
+                                adjustStockMutation.mutate({
+                                  id: product.id,
+                                  newStock: Math.floor(parsed),
+                                });
                               }}
                             >
                               <ArrowUpDown className="w-4 h-4 mr-2" /> Quick Stock Adjustment
@@ -721,10 +873,14 @@ export const InventoryPage = () => {
                           <DropdownMenuItem
                             className="text-destructive"
                             onClick={() => {
-                              if (confirm("Delete this product permanently?")) deleteMutation.mutate(product.id);
+                              const ok = confirm(
+                                "Archive this product? (Recommended)\n\nIt will disappear from inventory + POS lists, but old sales remain safe."
+                              );
+                              if (!ok) return;
+                              archiveMutation.mutate(product.id);
                             }}
                           >
-                            <Trash2 className="w-4 h-4 mr-2" /> Delete Product
+                            <Trash2 className="w-4 h-4 mr-2" /> Archive Product
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -774,7 +930,13 @@ export const InventoryPage = () => {
                 </div>
               </div>
 
-              <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={handleImageUpload}
+              />
             </div>
 
             {/* Name + Shortcut */}
@@ -805,12 +967,22 @@ export const InventoryPage = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Selling Price ($)</label>
-                  <Input type="number" placeholder="0.00" value={newItem.price} onChange={(e) => setNewItem({ ...newItem, price: e.target.value })} />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={newItem.price}
+                    onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
+                  />
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Cost Price ($)</label>
-                  <Input type="number" placeholder="0.00" value={newItem.cost} onChange={(e) => setNewItem({ ...newItem, cost: e.target.value })} />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={newItem.cost}
+                    onChange={(e) => setNewItem({ ...newItem, cost: e.target.value })}
+                  />
                 </div>
               </div>
 
@@ -818,7 +990,9 @@ export const InventoryPage = () => {
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Unit Profit:</span>
                   <div className="flex items-center gap-2">
-                    <span className={cn("font-bold", unitProfit >= 0 ? "text-green-600" : "text-red-500")}>
+                    <span
+                      className={cn("font-bold", unitProfit >= 0 ? "text-green-600" : "text-red-500")}
+                    >
                       ${unitProfit.toFixed(2)}
                     </span>
                     <Badge variant={unitProfit >= 0 ? "default" : "destructive"} className="text-xs">
@@ -840,7 +1014,10 @@ export const InventoryPage = () => {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Product Type</label>
-                <Select value={newItem.type} onValueChange={(val: any) => setNewItem({ ...newItem, type: val })}>
+                <Select
+                  value={newItem.type}
+                  onValueChange={(val: any) => setNewItem({ ...newItem, type: val })}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
@@ -854,16 +1031,21 @@ export const InventoryPage = () => {
               {newItem.type === "good" ? (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Stock</label>
-                  <Input type="number" value={newItem.stock} onChange={(e) => setNewItem({ ...newItem, stock: e.target.value })} />
+                  <Input
+                    type="number"
+                    value={newItem.stock}
+                    onChange={(e) => setNewItem({ ...newItem, stock: e.target.value })}
+                  />
                 </div>
               ) : (
-                <div className="flex items-center justify-center h-full text-xs text-muted-foreground italic">Services have infinite stock</div>
+                <div className="flex items-center justify-center h-full text-xs text-muted-foreground italic">
+                  Services have infinite stock
+                </div>
               )}
             </div>
 
             {/* Category + SKU */}
             <div className="grid grid-cols-2 gap-4">
-              {/* CATEGORY: select existing OR add new */}
               <div className="space-y-2">
                 <label className="text-sm font-medium">Category</label>
 
@@ -944,7 +1126,12 @@ export const InventoryPage = () => {
                     value={newItem.sku}
                     onChange={(e) => setNewItem({ ...newItem, sku: e.target.value })}
                   />
-                  <Button size="icon" variant="outline" onClick={() => setShowScanner(true)} title="Scan Barcode">
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    onClick={() => setShowScanner(true)}
+                    title="Scan Barcode"
+                  >
                     <ScanLine className="w-4 h-4" />
                   </Button>
                 </div>
@@ -961,7 +1148,9 @@ export const InventoryPage = () => {
               ) : (
                 <>
                   {editingProduct ? "Update Product" : "Create Product"}{" "}
-                  {!navigator.onLine && <span className="text-xs ml-2 opacity-80">(Queued)</span>}
+                  {!navigator.onLine && (
+                    <span className="text-xs ml-2 opacity-80">(Queued)</span>
+                  )}
                 </>
               )}
             </Button>
@@ -970,7 +1159,11 @@ export const InventoryPage = () => {
       </Dialog>
 
       {/* Scanner */}
-      <BarcodeScanner isOpen={showScanner} onClose={() => setShowScanner(false)} onScan={handleScanSKU} />
+      <BarcodeScanner
+        isOpen={showScanner}
+        onClose={() => setShowScanner(false)}
+        onScan={handleScanSKU}
+      />
     </div>
   );
 };
@@ -990,4 +1183,3 @@ const StatBox = ({ label, value, color, icon: Icon }: any) => (
     </div>
   </motion.div>
 );
-
