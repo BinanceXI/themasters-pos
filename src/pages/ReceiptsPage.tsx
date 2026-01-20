@@ -1,3 +1,4 @@
+// File: src/pages/ReceiptsPage.tsx
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -13,6 +14,8 @@ import {
   Cloud,
   Search,
   X,
+  Ban,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +28,7 @@ import { supabase } from "@/lib/supabase";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { PrintableReceipt } from "@/components/pos/PrintableReceipt";
-import type { CartItem, Product } from "@/types/pos";
+import type { CartItem, Product, Discount } from "@/types/pos";
 
 // --------------------
 // Offline queue helpers
@@ -41,6 +44,10 @@ function safeJSONParse<T>(raw: string | null, fallback: T): T {
   }
 }
 
+function writeOfflineQueue(queue: any[]) {
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue || []));
+}
+
 // --------------------
 // URL helper (HashRouter safe)
 // --------------------
@@ -48,12 +55,9 @@ function buildVerifyUrl(baseUrl: string, receiptId: string) {
   let b = (baseUrl || "").trim();
   if (!b) b = window.location.origin;
 
-  // remove trailing slash
   b = b.replace(/\/+$/, "");
 
-  // ensure hash base
   if (b.includes("#")) {
-    // normalize to ".../#"
     if (!b.endsWith("#")) {
       b = b.split("#")[0].replace(/\/+$/, "") + "/#";
     }
@@ -85,11 +89,43 @@ type OnlineReceiptRow = {
   status: string | null;
   created_at: string;
   profiles?: { full_name?: string | null } | null;
+
+  // optional if you later add them
+  subtotal_amount?: number | string | null;
+  discount_amount?: number | string | null;
+  tax_amount?: number | string | null;
+
+  voided_at?: string | null;
+  void_reason?: string | null;
 };
 
+type PrintData = {
+  cart: CartItem[];
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  cashierName: string;
+  customerName: string;
+  receiptId: string;
+  receiptNumber: string;
+  paymentMethod: string;
+  activeDiscount?: Discount | null;
+  taxRatePct?: number;
+};
+
+function num(x: any) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
 export const ReceiptsPage = () => {
-  const { currentUser } = usePOS();
+  const { currentUser, can } = usePOS();
   const isAdmin = currentUser?.role === "admin";
+  const canVoid = isAdmin || !!currentUser?.permissions?.allowVoid;
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<"settings" | "receipts">("settings");
@@ -102,15 +138,7 @@ export const ReceiptsPage = () => {
   const [previewReceiptNumber] = useState(`TM-${Date.now().toString().slice(-6)}`);
 
   // printing
-  const [printData, setPrintData] = useState<null | {
-    cart: CartItem[];
-    total: number;
-    cashierName: string;
-    customerName: string;
-    receiptId: string;
-    receiptNumber: string;
-    paymentMethod: string;
-  }>(null);
+  const [printData, setPrintData] = useState<PrintData | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
@@ -125,17 +153,32 @@ export const ReceiptsPage = () => {
     }, 250);
     return () => clearTimeout(t);
   }, [printData]);
+  useEffect(() => {
+  if (activeTab !== "receipts") return;
+
+  const ch = supabase
+    .channel("orders-live")
+    .on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "orders" },
+      () => queryClient.invalidateQueries({ queryKey: ["receipts"] })
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(ch);
+  };
+}, [activeTab, queryClient]);
 
   // --------------------
-  // 1) Store settings (offline cached)
+  // 1) Store settings
   // --------------------
-  const { data: settings, isLoading: settingsLoading } = useQuery({
+  const { data: settings } = useQuery({
     queryKey: ["storeSettings"],
     queryFn: async () => {
       const { data, error } = await supabase.from("store_settings").select("*").single();
 
-      // No row yet => defaults
-      // Supabase "no rows" code often PGRST116
+      // No row yet => defaults (PGRST116)
       if (error && (error as any).code !== "PGRST116") throw error;
 
       const defaults: StoreSettings = {
@@ -201,37 +244,41 @@ export const ReceiptsPage = () => {
   const { data: onlineReceipts = [], isLoading: receiptsLoading, refetch } = useQuery({
     queryKey: ["receipts", q],
     queryFn: async () => {
-      if (!navigator.onLine) return [];
+  if (!navigator.onLine) return [];
 
-      const base = supabase
-        .from("orders")
-        .select(
-          `
-          id,
-          receipt_id,
-          receipt_number,
-          customer_name,
-          total_amount,
-          payment_method,
-          status,
-          created_at,
-          profiles:cashier_id ( full_name )
-        `
-        )
-        .order("created_at", { ascending: false })
-        .limit(80);
+  const base = supabase
+    .from("orders")
+    .select("id,receipt_id,receipt_number,customer_name,total_amount,payment_method,status,created_at,cashier_id")
+    .order("created_at", { ascending: false })
+    .limit(200);
 
-      if (q.trim()) {
-        const s = q.trim();
-        base.or(`receipt_number.ilike.%${s}%,customer_name.ilike.%${s}%`);
-      }
+  if (q.trim()) {
+    const s = q.trim();
+    base.or(`receipt_number.ilike.%${s}%,customer_name.ilike.%${s}%`);
+  }
 
-      const { data, error } = await base;
-      if (error) throw error;
-      return (data || []) as OnlineReceiptRow[];
-    },
+  const { data: orders, error } = await base;
+  if (error) throw error;
+
+  const cashierIds = Array.from(new Set((orders || []).map((o: any) => o.cashier_id).filter(Boolean)));
+
+  let cashierMap = new Map<string, string>();
+  if (cashierIds.length) {
+    const { data: profs } = await supabase
+      .from("profiles")
+      .select("id,full_name")
+      .in("id", cashierIds);
+
+    (profs || []).forEach((p: any) => cashierMap.set(p.id, p.full_name || "Staff"));
+  }
+
+  return (orders || []).map((o: any) => ({
+    ...o,
+    profiles: { full_name: cashierMap.get(o.cashier_id) || "Staff" },
+  })) as any[];
+},
     enabled: activeTab === "receipts",
-    staleTime: 1000 * 30,
+    staleTime: 1000 * 20,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   });
@@ -284,12 +331,25 @@ export const ReceiptsPage = () => {
             discount: 0,
             discountType: "percentage",
             customPrice: Number(it.price_at_sale) || 0,
-          };
+          } as any;
         });
+
+        const computedSubtotal = round2(
+          cart.reduce((s, it: any) => s + num(it.customPrice ?? it.product?.price) * num(it.quantity), 0)
+        );
+
+        // If you later store these columns, they’ll be used; otherwise compute clean zeros.
+        const subtotal = row.subtotal_amount != null ? num(row.subtotal_amount) : computedSubtotal;
+        const discount = row.discount_amount != null ? num(row.discount_amount) : 0;
+        const tax = row.tax_amount != null ? num(row.tax_amount) : 0;
+        const total = num(row.total_amount) || round2(subtotal - discount + tax);
 
         setPrintData({
           cart,
-          total: Number(row.total_amount) || 0,
+          subtotal,
+          discount,
+          tax,
+          total,
           cashierName: row.profiles?.full_name || "Staff",
           customerName: row.customer_name || "",
           receiptId: row.receipt_id,
@@ -310,17 +370,130 @@ export const ReceiptsPage = () => {
         lineId: it.lineId || `off-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       }));
 
+      const subtotal = round2(
+        cart.reduce((s, it: any) => {
+          const price = num(it.customPrice ?? it.product?.price);
+          return s + price * num(it.quantity);
+        }, 0)
+      );
+
+      // offline queue currently doesn’t store discount/tax breakdown, so print as 0 unless you add later
       setPrintData({
         cart,
-        total: Number(sale.total) || 0,
-        cashierName: currentUser?.name || "Staff",
+        subtotal,
+        discount: 0,
+        tax: 0,
+        total: num(sale.total) || subtotal,
+        cashierName: currentUser?.name || currentUser?.full_name || "Staff",
         customerName: sale.customerName || "",
         receiptId: sale.meta?.receiptId,
         receiptNumber: sale.meta?.receiptNumber,
         paymentMethod: sale.payments?.[0]?.method || "cash",
       });
     },
-    [currentUser?.name]
+    [currentUser?.name, currentUser?.full_name]
+  );
+
+  // ✅ VOID (recommended instead of delete)
+  const voidReceiptMutation = useMutation({
+    mutationFn: async (args: { orderId: string; reason?: string }) => {
+      if (!navigator.onLine) throw new Error("You are offline.");
+      if (!canVoid) throw new Error("Not allowed to void receipts.");
+
+      const payload: any = {
+        status: "voided",
+        voided_at: new Date().toISOString(),
+        void_reason: args.reason || null,
+        voided_by: currentUser?.id || null,
+      };
+
+      const { error } = await supabase.from("orders").update(payload).eq("id", args.orderId);
+      if (error) throw error;
+
+      // optional: if you have an RPC to restore stock, call it here (best-effort)
+      // (kept safe: ignore if function doesn’t exist)
+      try {
+        const { data: items } = await supabase
+          .from("order_items")
+          .select("product_id, quantity")
+          .eq("order_id", args.orderId);
+
+        for (const it of items || []) {
+          await supabase.rpc("increment_stock", {
+            p_product_id: it.product_id,
+            p_qty: Number(it.quantity) || 0,
+          });
+        }
+      } catch {
+        // ignore: receipt will still be voided
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["receipts"] });
+      toast.success("Receipt voided");
+    },
+    onError: (err: any) => toast.error(err?.message || "Void failed"),
+  });
+
+  // ✅ HARD DELETE (admin only) — deletes order_items first then order
+  const deleteReceiptMutation = useMutation({
+    mutationFn: async (args: { orderId: string }) => {
+      if (!navigator.onLine) throw new Error("You are offline.");
+      if (!isAdmin) throw new Error("Admins only.");
+
+      // Delete items first (avoids FK errors)
+      const { error: itemsErr } = await supabase.from("order_items").delete().eq("order_id", args.orderId);
+      if (itemsErr) throw itemsErr;
+
+      const { error: orderErr } = await supabase.from("orders").delete().eq("id", args.orderId);
+      if (orderErr) throw orderErr;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["receipts"] });
+      toast.success("Receipt deleted");
+    },
+    onError: (err: any) => toast.error(err?.message || "Delete failed"),
+  });
+
+  const removeOfflinePending = useCallback(
+    (receiptId: string) => {
+      const queue = safeJSONParse<any[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+      const next = (queue || []).filter((s: any) => s?.meta?.receiptId !== receiptId);
+      writeOfflineQueue(next);
+      toast.success("Removed from offline queue");
+    },
+    []
+  );
+
+  const onVoid = useCallback(
+    (row: OnlineReceiptRow) => {
+      if (!canVoid) return toast.error("Not allowed");
+      if (!navigator.onLine) return toast.error("Offline");
+
+      if ((row.status || "").toLowerCase() === "voided") return;
+
+      const ok = window.confirm(`Void receipt ${row.receipt_number}?\n\nThis is safer than delete.`);
+      if (!ok) return;
+
+      const reason = window.prompt("Void reason (optional):") || "";
+      voidReceiptMutation.mutate({ orderId: row.id, reason });
+    },
+    [canVoid, voidReceiptMutation]
+  );
+
+  const onDelete = useCallback(
+    (row: OnlineReceiptRow) => {
+      if (!isAdmin) return toast.error("Admins only");
+      if (!navigator.onLine) return toast.error("Offline");
+
+      const ok = window.confirm(
+        `DELETE receipt ${row.receipt_number}?\n\nThis will permanently remove the order and its items.`
+      );
+      if (!ok) return;
+
+      deleteReceiptMutation.mutate({ orderId: row.id });
+    },
+    [isAdmin, deleteReceiptMutation]
   );
 
   // --------------------
@@ -334,9 +507,7 @@ export const ReceiptsPage = () => {
         <div className="flex items-start md:items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-white tracking-tight">Receipts</h1>
-            <p className="text-slate-400 text-sm">
-              Settings, verification links, reprint, and offline pending receipts.
-            </p>
+            <p className="text-slate-400 text-sm">Settings, verification links, reprint, void/delete, offline pending.</p>
           </div>
 
           {activeTab === "settings" && (
@@ -358,18 +529,8 @@ export const ReceiptsPage = () => {
 
         {/* Tabs */}
         <div className="flex p-1 bg-slate-900/50 border border-slate-800 rounded-xl w-fit backdrop-blur-md">
-          <TabButton
-            active={activeTab === "settings"}
-            onClick={() => setActiveTab("settings")}
-            icon={FileImage}
-            label="Settings"
-          />
-          <TabButton
-            active={activeTab === "receipts"}
-            onClick={() => setActiveTab("receipts")}
-            icon={Receipt}
-            label="Receipts"
-          />
+          <TabButton active={activeTab === "settings"} onClick={() => setActiveTab("settings")} icon={FileImage} label="Settings" />
+          <TabButton active={activeTab === "receipts"} onClick={() => setActiveTab("receipts")} icon={Receipt} label="Receipts" />
         </div>
 
         <AnimatePresence mode="wait">
@@ -439,11 +600,7 @@ export const ReceiptsPage = () => {
                       QR contains the factual <b>receipt_id</b> and opens verification page.
                     </p>
                   </div>
-                  <Switch
-                    checked={formData.show_qr_code !== false}
-                    onCheckedChange={(c) => setFormData({ ...formData, show_qr_code: c })}
-                    disabled={!isAdmin}
-                  />
+                  <Switch checked={formData.show_qr_code !== false} onCheckedChange={(c) => setFormData({ ...formData, show_qr_code: c })} disabled={!isAdmin} />
                 </div>
 
                 {formData.show_qr_code !== false && (
@@ -458,21 +615,14 @@ export const ReceiptsPage = () => {
                     />
 
                     <div className="mt-3 flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="border-slate-700 text-slate-300 hover:text-white"
-                        onClick={() => copyText(previewVerifyUrl)}
-                      >
+                      <Button type="button" variant="outline" className="border-slate-700 text-slate-300 hover:text-white" onClick={() => copyText(previewVerifyUrl)}>
                         <Copy className="w-4 h-4 mr-2" /> Copy Preview Link
                       </Button>
                       <div className="text-xs text-slate-400 font-mono truncate">{previewVerifyUrl}</div>
                     </div>
 
                     <div className="mt-4 bg-white rounded-xl p-4 w-fit">
-                      {/* Preview QR */}
-                      <div className="text-center text-xs font-mono mb-2">Preview QR</div>
-                      {/* QRCodeSVG is already used in PrintableReceipt, no need here */}
+                      <div className="text-center text-xs font-mono mb-2">Preview</div>
                       <div className="text-[10px] text-slate-500 mt-2">
                         receipt_number: <b>{previewReceiptNumber}</b>
                       </div>
@@ -520,11 +670,7 @@ export const ReceiptsPage = () => {
                       title={!isOnline ? "Search needs internet" : undefined}
                     />
                     {q && (
-                      <button
-                        className="absolute right-2 top-2.5 text-slate-500 hover:text-white"
-                        onClick={() => setQ("")}
-                        type="button"
-                      >
+                      <button className="absolute right-2 top-2.5 text-slate-500 hover:text-white" onClick={() => setQ("")} type="button">
                         <X className="w-4 h-4" />
                       </button>
                     )}
@@ -560,45 +706,42 @@ export const ReceiptsPage = () => {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="text-white font-mono font-bold">{rnum}</span>
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">
-                                PENDING SYNC
-                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">PENDING SYNC</span>
                             </div>
                             <div className="text-xs text-slate-200/80">
-                              {sale.customerName ? `Customer: ${sale.customerName}` : "Walk-in"} •{" "}
-                              {t ? t.toLocaleString() : "Unknown time"}
+                              {sale.customerName ? `Customer: ${sale.customerName}` : "Walk-in"} • {t ? t.toLocaleString() : "Unknown time"}
                             </div>
-                            <div className="text-xs text-slate-200/70 font-mono break-all mt-1">
-                              receipt_id: {rid}
-                            </div>
+                            <div className="text-xs text-slate-200/70 font-mono break-all mt-1">receipt_id: {rid}</div>
                           </div>
 
                           <div className="flex gap-2 flex-wrap">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="border-slate-700 text-slate-200 hover:text-white"
-                              onClick={() => copyText(verifyUrl)}
-                            >
+                            <Button size="sm" variant="outline" className="border-slate-700 text-slate-200 hover:text-white" onClick={() => copyText(verifyUrl)}>
                               <Copy className="w-4 h-4 mr-2" /> Copy Verify Link
                             </Button>
 
-                            <Button
-                              size="sm"
-                              className="bg-white text-slate-900 hover:bg-slate-200"
-                              onClick={() => printOfflineReceipt(sale)}
-                            >
+                            <Button size="sm" className="bg-white text-slate-900 hover:bg-slate-200" onClick={() => printOfflineReceipt(sale)}>
                               <Printer className="w-4 h-4 mr-2" /> Reprint
                             </Button>
+
+                            {isAdmin && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-amber-500/40 text-amber-200 hover:text-white hover:bg-amber-500/10"
+                                onClick={() => {
+                                  const ok = window.confirm(`Remove ${rnum} from offline queue?`);
+                                  if (!ok) return;
+                                  removeOfflinePending(rid);
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" /> Remove
+                              </Button>
+                            )}
                           </div>
                         </div>
                       );
                     })}
-                    {pendingCount > 10 && (
-                      <div className="text-xs text-slate-400 mt-2">
-                        Showing 10 of {pendingCount} pending receipts.
-                      </div>
-                    )}
+                    {pendingCount > 10 && <div className="text-xs text-slate-400 mt-2">Showing 10 of {pendingCount} pending receipts.</div>}
                   </div>
                 </SettingsCard>
               )}
@@ -606,9 +749,7 @@ export const ReceiptsPage = () => {
               {/* ONLINE RECEIPTS */}
               <SettingsCard title="Receipts History (Online)" icon={Receipt}>
                 {!isOnline ? (
-                  <div className="text-sm text-slate-400">
-                    You are offline. Online receipts history will show when connected.
-                  </div>
+                  <div className="text-sm text-slate-400">You are offline. Online receipts history will show when connected.</div>
                 ) : receiptsLoading ? (
                   <div className="text-sm text-slate-400">Loading receipts…</div>
                 ) : onlineReceipts.length === 0 ? (
@@ -617,6 +758,8 @@ export const ReceiptsPage = () => {
                   <div className="space-y-2">
                     {onlineReceipts.map((row) => {
                       const verifyUrl = buildVerifyUrl(formData.qr_code_data || window.location.origin, row.receipt_id);
+                      const status = String(row.status || "completed").toLowerCase();
+                      const isVoided = status === "voided";
 
                       return (
                         <div
@@ -630,52 +773,72 @@ export const ReceiptsPage = () => {
                               <span
                                 className={cn(
                                   "text-[10px] px-2 py-0.5 rounded-full border",
-                                  row.status === "completed"
-                                    ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
-                                    : "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                                  isVoided
+                                    ? "bg-red-500/10 text-red-300 border-red-500/20"
+                                    : status === "completed"
+                                      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                                      : "bg-amber-500/10 text-amber-300 border-amber-500/20"
                                 )}
                               >
                                 {String(row.status || "").toUpperCase()}
                               </span>
 
                               <span className="text-slate-500 text-xs">•</span>
-                              <span className="text-slate-300 text-xs">
-                                {String(row.payment_method || "cash").toUpperCase()}
-                              </span>
+                              <span className="text-slate-300 text-xs">{String(row.payment_method || "cash").toUpperCase()}</span>
                             </div>
 
                             <div className="text-xs text-slate-400">
-                              {row.customer_name ? `Customer: ${row.customer_name}` : "Walk-in"} •{" "}
-                              {new Date(row.created_at).toLocaleString()}
+                              {row.customer_name ? `Customer: ${row.customer_name}` : "Walk-in"} • {new Date(row.created_at).toLocaleString()}
                             </div>
 
                             <div className="text-xs text-slate-500">
                               Cashier: {row.profiles?.full_name || "Staff"} • Total:{" "}
-                              <b className="text-white">${Number(row.total_amount || 0).toFixed(2)}</b>
+                              <b className="text-white">${num(row.total_amount).toFixed(2)}</b>
                             </div>
 
-                            <div className="text-[11px] text-slate-500 font-mono break-all mt-1">
-                              receipt_id: {row.receipt_id}
-                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono break-all mt-1">receipt_id: {row.receipt_id}</div>
+
+                            {isVoided && row.void_reason && (
+                              <div className="text-[11px] text-red-200/80 mt-1">
+                                Void reason: <span className="text-red-200">{row.void_reason}</span>
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex gap-2 flex-wrap">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="border-slate-700 text-slate-200 hover:text-white"
-                              onClick={() => copyText(verifyUrl)}
-                            >
+                            <Button size="sm" variant="outline" className="border-slate-700 text-slate-200 hover:text-white" onClick={() => copyText(verifyUrl)}>
                               <Copy className="w-4 h-4 mr-2" /> Copy Link
+                            </Button>
+
+                            <Button size="sm" className="bg-white text-slate-900 hover:bg-slate-200" onClick={() => printOnlineReceipt(row)}>
+                              <Printer className="w-4 h-4 mr-2" /> Reprint
                             </Button>
 
                             <Button
                               size="sm"
-                              className="bg-white text-slate-900 hover:bg-slate-200"
-                              onClick={() => printOnlineReceipt(row)}
+                              variant="outline"
+                              className={cn(
+                                "border-red-500/40 text-red-200 hover:text-white hover:bg-red-500/10",
+                                (!canVoid || isVoided) && "opacity-50 pointer-events-none"
+                              )}
+                              title={!canVoid ? "Not allowed" : isVoided ? "Already voided" : "Void receipt"}
+                              onClick={() => onVoid(row)}
                             >
-                              <Printer className="w-4 h-4 mr-2" /> Reprint
+                              <Ban className="w-4 h-4 mr-2" /> Void
                             </Button>
+
+                            {isAdmin && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800/40"
+                                onClick={() => onDelete(row)}
+                                disabled={deleteReceiptMutation.isPending}
+                                title="Hard delete (admin)"
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" /> Delete
+                              </Button>
+                            )}
                           </div>
                         </div>
                       );
@@ -683,6 +846,12 @@ export const ReceiptsPage = () => {
                   </div>
                 )}
               </SettingsCard>
+
+              {(voidReceiptMutation.isPending || deleteReceiptMutation.isPending) && (
+                <div className="text-xs text-slate-400">
+                  Working… {voidReceiptMutation.isPending ? "Voiding receipt" : "Deleting receipt"}
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -693,12 +862,17 @@ export const ReceiptsPage = () => {
         {printData && (
           <PrintableReceipt
             cart={printData.cart}
+            subtotal={printData.subtotal}
+            discount={printData.discount}
+            tax={printData.tax}
             total={printData.total}
             cashierName={printData.cashierName}
             customerName={printData.customerName}
             receiptId={printData.receiptId}
             receiptNumber={printData.receiptNumber}
             paymentMethod={printData.paymentMethod}
+            activeDiscount={printData.activeDiscount ?? null}
+            taxRatePct={printData.taxRatePct}
           />
         )}
       </div>

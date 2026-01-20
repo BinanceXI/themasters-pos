@@ -1,9 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 @layer base {
   :root {
     --background: 220 20% 97%;
@@ -79,16 +78,32 @@
 
 @layer base {
   * { @apply border-border; }
+
   html, body {
     height: 100%;
     width: 100%;
     margin: 0;
-    overflow: hidden;
+
+    /* ✅ allow scrolling, do NOT lock the whole app */
+    overflow: auto;
+
+    /* ✅ mobile correct viewport height */
+    min-height: 100vh;
+    min-height: 100dvh;
+
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+
     @apply bg-background text-foreground;
   }
+
+  /* ✅ root should take full height */
+  #root {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
   .font-mono { font-family: 'JetBrains Mono', monospace; }
 }
 

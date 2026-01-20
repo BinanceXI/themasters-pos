@@ -1,7 +1,7 @@
-//binanceXI//
-import { useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
+// File: src/components/POSSidebar.tsx
+import { useMemo, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { motion } from "framer-motion";
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -11,20 +11,19 @@ import {
   Printer,
   ChevronLeft,
   ChevronRight,
-  PieChart
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { usePOS } from '@/contexts/POSContext';
-import themastersLogo from '@/assets/themasters-logo.png';
+  PieChart,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { usePOS } from "@/contexts/POSContext";
 
 const navItems = [
-  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/pos', label: 'Point of Sale', icon: ShoppingCart },
-  { path: '/inventory', label: 'Inventory', icon: Package },
-  { path: '/profit', label: 'Profit Analysis', icon: PieChart },
-  { path: '/receipts', label: 'Receipts', icon: Printer },
-  { path: '/reports', label: 'Reports', icon: BarChart3 },
-  { path: '/settings', label: 'Settings', icon: Settings },
+  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/pos", label: "Point of Sale", icon: ShoppingCart },
+  { path: "/inventory", label: "Inventory", icon: Package },
+  { path: "/profit", label: "Profit Analysis", icon: PieChart },
+  { path: "/receipts", label: "Receipts", icon: Printer },
+  { path: "/reports", label: "Reports", icon: BarChart3 },
+  { path: "/settings", label: "Settings", icon: Settings },
 ];
 
 export const POSSidebar = () => {
@@ -32,133 +31,163 @@ export const POSSidebar = () => {
   const location = useLocation();
   const { currentUser } = usePOS();
 
-  // Helper to safely check permissions
-  const canView = (item: typeof navItems[0]) => {
-    // 1. Always show basic apps (Prevents "Blank Sidebar" panic)
-    if (item.path === '/dashboard' || item.path === '/pos' || item.path === '/receipts') {
-      return true;
-    }
+  const role = (currentUser as any)?.role;
+  const isAdmin = role === "admin";
+  const isCashier = role === "cashier";
 
-    // 2. If user data isn't loaded yet, hide sensitive stuff safely
-    if (!currentUser) return false;
-    
-    // 3. Admin sees EVERYTHING
-    if (currentUser.role === 'admin') return true;
+  // ✅ Cashier sees ONLY POS
+  const visibleItems = useMemo(() => {
+    if (!currentUser) return [];
+    if (isCashier) return navItems.filter((i) => i.path === "/pos");
+    if (isAdmin) return navItems;
+    return navItems.filter((i) => i.path === "/pos");
+  }, [currentUser, isAdmin, isCashier]);
 
-    // 4. Hide Admin-Only pages from Cashiers
-    if (item.path === '/settings' || item.path === '/profit') return false;
-
-    // 5. Check specific permissions for Cashiers
-    const perms = currentUser.permissions;
-    
-    // Handle Array format (e.g. ['sell', 'inventory'])
-    if (Array.isArray(perms)) {
-      if (item.path === '/reports') return perms.includes('reports');
-      if (item.path === '/inventory') return perms.includes('inventory');
-    }
-
-    // Handle Object format (e.g. { allowReports: true })
-    if (typeof perms === 'object' && perms !== null) {
-      const p = perms as any;
-      if (item.path === '/reports') return !!p.allowReports;
-      if (item.path === '/inventory') return !!p.allowInventory;
-    }
-
-    return true;
-  };
+  const displayName =
+    (currentUser as any)?.full_name ||
+    (currentUser as any)?.name ||
+    (currentUser as any)?.username ||
+    "User";
 
   return (
-    <motion.aside
-      initial={false}
-      animate={{ width: collapsed ? 72 : 260 }}
-      transition={{ duration: 0.2 }}
-      className="hidden md:flex h-screen bg-sidebar flex-col border-r border-sidebar-border shadow-xl z-20"
-    >
-      {/* Logo Section - HUGE & BLUE/WHITE */}
-      <div className={cn(
-        "flex items-center justify-center border-b border-sidebar-border overflow-hidden transition-all duration-300 relative",
-        collapsed ? "h-20 px-2" : "h-32 px-6"
-      )}>
-        <img 
-          src={themastersLogo} 
-          alt="Masters of Technology" 
-          className={cn(
-            "object-contain transition-all duration-300 relative z-10",
-            collapsed ? "w-10 h-10" : "w-full h-24"
-          )}
-          style={{ 
-            // ✨ THE MAGIC FILTER: 
-            // Inverts colors (Black -> White) 
-            // Rotates Hue 180deg (Orange -> Blue)
-            // Increases Contrast (Makes it pop)
-            filter: 'invert(1) hue-rotate(180deg) contrast(1.5)' 
-          }}
-        />
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto pos-scrollbar">
-        {navItems.map((item) => {
-          if (!canView(item)) return null;
-
-          const isActive = location.pathname === item.path;
-          return (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={cn(
-                'flex items-center gap-3 px-3 py-3 rounded-xl transition-all group relative font-medium mb-1',
-                isActive
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm'
-                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
-              )}
-            >
-              {isActive && (
-                <motion.div
-                  layoutId="activeIndicator"
-                  className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-sidebar-primary rounded-r-full"
-                />
-              )}
-              
-              <item.icon className={cn('w-5 h-5 shrink-0', isActive && 'text-sidebar-primary')} />
-              
-              {!collapsed && (
-                <motion.span
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-sm truncate"
-                >
-                  {item.label}
-                </motion.span>
-              )}
-
-              {/* Hover Tooltip for Collapsed State */}
-              {collapsed && (
-                <div className="absolute left-full ml-4 px-3 py-1.5 bg-popover text-popover-foreground rounded-md text-xs font-medium opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap shadow-md z-50 border border-border">
-                  {item.label}
+    <>
+      {/* ✅ FIXED (doesn't scroll) + SMALLER WIDTH */}
+      <motion.aside
+        initial={false}
+        animate={{ width: collapsed ? 68 : 220 }}
+        transition={{ duration: 0.18 }}
+        className={cn(
+          "hidden md:flex flex-col z-30",
+          "fixed left-0 top-0 h-screen",
+          "bg-slate-950 border-r border-white/10"
+        )}
+      >
+        {/* ===== BRAND HEADER (NO LOGO) ===== */}
+        <div className={cn("px-4 pt-4 pb-3 border-b border-white/10", collapsed && "px-3")}>
+          <div className={cn("flex items-start", collapsed ? "justify-center" : "justify-between")}>
+            {!collapsed ? (
+              <div className="min-w-0">
+                <div className="text-white font-semibold text-[15px] leading-tight">
+                  TheMasters POS
                 </div>
-              )}
-            </NavLink>
-          );
-        })}
-      </nav>
+                <div className="text-white/60 text-[12px] mt-0.5 truncate">
+                  {displayName} • {role || "—"}
+                </div>
+              </div>
+            ) : (
+              <div className="text-white font-bold text-[13px] leading-none">TM</div>
+            )}
+          </div>
 
-      {/* Collapse Button */}
-      <div className="p-4 border-t border-sidebar-border">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sidebar-foreground/50 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors"
-        >
-          {collapsed ? (
-            <ChevronRight className="w-5 h-5" />
-          ) : (
-            <>
-              <ChevronLeft className="w-5 h-5" />
-              <span className="text-sm font-medium">Collapse Sidebar</span>
-            </>
+          {!collapsed && (
+            <div className="mt-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.03]">
+                <span
+                  className={cn(
+                    "h-2 w-2 rounded-full",
+                    navigator.onLine ? "bg-emerald-500" : "bg-amber-400"
+                  )}
+                />
+                <span className="text-[12px] text-white/70">
+                  {navigator.onLine ? "Online" : "Offline"}
+                </span>
+              </div>
+            </div>
           )}
-        </button>
-      </div>
-    </motion.aside>
+        </div>
+
+        {/* ===== NAV ===== */}
+        <nav className={cn("flex-1 overflow-y-auto", collapsed ? "px-2 py-3" : "px-3 py-3")}>
+          <div className="space-y-2">
+            {visibleItems.map((item) => {
+              const isActive = location.pathname === item.path;
+
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  className={cn(
+                    "group relative flex items-center rounded-2xl transition-all",
+                    collapsed ? "justify-center px-2 py-3" : "px-3 py-3",
+                    isActive
+                      ? "bg-gradient-to-r from-blue-600/25 to-cyan-500/10 border border-blue-500/30"
+                      : "border border-transparent hover:bg-white/[0.04] hover:border-white/10"
+                  )}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeBar"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[4px] h-8 bg-blue-500 rounded-r-full"
+                    />
+                  )}
+
+                  <item.icon
+                    className={cn(
+                      "shrink-0 w-5 h-5",
+                      isActive ? "text-blue-300" : "text-white/75 group-hover:text-white"
+                    )}
+                  />
+
+                  {!collapsed && (
+                    <div className="ml-3 flex-1 min-w-0">
+                      <div className={cn("text-[14px] font-medium truncate", isActive ? "text-white" : "text-white/80")}>
+                        {item.label}
+                      </div>
+                      <div className="text-[11px] text-white/45 truncate">
+                        {item.path === "/pos" ? "Sell & checkout" : ""}
+                        {item.path === "/inventory" ? "Stock & products" : ""}
+                        {item.path === "/reports" ? "Analytics & exports" : ""}
+                        {item.path === "/settings" ? "System controls" : ""}
+                        {item.path === "/receipts" ? "Printed history" : ""}
+                        {item.path === "/profit" ? "Margins & trends" : ""}
+                        {item.path === "/dashboard" ? "Overview" : ""}
+                      </div>
+                    </div>
+                  )}
+
+                  {collapsed && (
+                    <div className="absolute left-full ml-3 px-3 py-1.5 rounded-lg text-xs font-medium opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-white/10 bg-slate-900 text-white shadow-lg">
+                      {item.label}
+                    </div>
+                  )}
+                </NavLink>
+              );
+            })}
+          </div>
+
+          {!collapsed && isCashier && (
+            <div className="mt-4 px-3 py-3 rounded-2xl border border-white/10 bg-white/[0.03]">
+              <div className="text-[12px] text-white/70 font-medium">Cashier Mode</div>
+              <div className="text-[11px] text-white/45 mt-0.5">POS only access</div>
+            </div>
+          )}
+        </nav>
+
+        {/* ===== COLLAPSE ===== */}
+        <div className={cn("border-t border-white/10", collapsed ? "p-2" : "p-3")}>
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            className={cn(
+              "w-full rounded-2xl transition-colors flex items-center justify-center gap-2",
+              "text-white/65 hover:text-white bg-white/[0.02] hover:bg-white/[0.04]",
+              "border border-white/10",
+              "py-2"
+            )}
+          >
+            {collapsed ? (
+              <ChevronRight className="w-5 h-5" />
+            ) : (
+              <>
+                <ChevronLeft className="w-5 h-5" />
+                <span className="text-sm font-medium">Collapse</span>
+              </>
+            )}
+          </button>
+        </div>
+      </motion.aside>
+
+      {/* ✅ Spacer so page content doesn't go under fixed sidebar */}
+      <div className={cn("hidden md:block", collapsed ? "w-[68px]" : "w-[220px]")} />
+    </>
   );
 };

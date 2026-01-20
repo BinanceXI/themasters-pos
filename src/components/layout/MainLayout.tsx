@@ -9,7 +9,7 @@ interface MainLayoutProps {
 
 export const MainLayout = ({ children }: MainLayoutProps) => {
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+   <div className="flex min-h-[100dvh] bg-background">
       {/* Desktop Sidebar - hidden on mobile */}
       <POSSidebar />
       

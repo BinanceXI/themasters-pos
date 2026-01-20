@@ -1,3 +1,4 @@
+// File: src/pages/POSPage.tsx
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -13,15 +14,17 @@ import {
   Loader2,
   Box,
   CloudOff,
+  Percent,
+  BadgeDollarSign,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { usePOS } from "@/contexts/POSContext";
 import { supabase } from "@/lib/supabase";
-import { useQuery } from "@tanstack/react-query";
-import { Product, CartItem } from "@/types/pos";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Product, CartItem } from "@/types/pos";
 import { cn } from "@/lib/utils";
-import { PaymentPanel, PaymentPanelRef } from "@/components/pos/PaymentPanel";
+import { PaymentPanel, type PaymentPanelRef } from "@/components/pos/PaymentPanel";
 import { BarcodeScanner } from "@/components/pos/BarcodeScanner";
 import { PrintableReceipt } from "@/components/pos/PrintableReceipt";
 import { useSecureTime } from "@/lib/secureTime";
@@ -29,6 +32,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type FocusArea = "search" | "customer" | "products" | "cart";
+type DiscountType = "percentage" | "fixed";
 
 function isEditableTarget(el: Element | null) {
   if (!el) return false;
@@ -38,15 +42,38 @@ function isEditableTarget(el: Element | null) {
 }
 
 function makeReceiptId() {
-  // Works on modern browsers; fallback for older ones
   // @ts-ignore
   return globalThis.crypto?.randomUUID?.() ?? `rcpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 function makeReceiptNumber() {
-  return `TM-${Date.now().toString().slice(-6)}`;
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  const rand = Math.random().toString(16).slice(2, 6).toUpperCase();
+
+  return `TM-${y}${m}${day}-${hh}${mm}${ss}-${rand}`;
 }
 
+/** ---- helpers ---- */
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+// Settings key (so you can control later from Settings page)
+const TAX_RATE_KEY = "themasters_tax_rate"; // store as percentage e.g. "0" or "15"
+
 export const POSPage = () => {
+  const queryClient = useQueryClient();
+
   // ---- PRINTING STATE ----
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [isPrinting, setIsPrinting] = useState(false);
@@ -72,9 +99,39 @@ export const POSPage = () => {
   const [selectedProductIndex, setSelectedProductIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+
+  // Global discount code dialog
   const [showDiscountDialog, setShowDiscountDialog] = useState(false);
   const [discountCode, setDiscountCode] = useState("");
+
+  // Per-item discount dialog
+  const [showItemDiscountDialog, setShowItemDiscountDialog] = useState(false);
+  const [discountLineId, setDiscountLineId] = useState<string | null>(null);
+  const [discountMode, setDiscountMode] = useState<"amount" | "percent">("amount");
+  const [discountValueRaw, setDiscountValueRaw] = useState<string>("");
+
   const [focusArea, setFocusArea] = useState<FocusArea>("products");
+
+  // Tax (controlled by Settings later; default 0 NOW)
+  const [taxRatePct, setTaxRatePct] = useState<number>(0);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(TAX_RATE_KEY);
+    const n = raw == null ? 0 : Number(raw);
+    setTaxRatePct(Number.isFinite(n) ? clamp(n, 0, 100) : 0);
+  }, []);
+
+  // If you later change settings without refresh, emit:
+  // window.dispatchEvent(new Event("themasters_settings_changed"))
+  useEffect(() => {
+    const onSettingsChanged = () => {
+      const raw = localStorage.getItem(TAX_RATE_KEY);
+      const n = raw == null ? 0 : Number(raw);
+      setTaxRatePct(Number.isFinite(n) ? clamp(n, 0, 100) : 0);
+    };
+    window.addEventListener("themasters_settings_changed" as any, onSettingsChanged);
+    return () => window.removeEventListener("themasters_settings_changed" as any, onSettingsChanged);
+  }, []);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const customerInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +142,7 @@ export const POSPage = () => {
     addToCart,
     removeFromCart,
     updateCartItemQuantity,
+    updateCartItemDiscount,
     clearCart,
     selectedCategory,
     setSelectedCategory,
@@ -102,7 +160,13 @@ export const POSPage = () => {
 
   const { formatDate } = useSecureTime();
 
-  // ---- PRODUCTS (cached by React Query; offline shows last cached data) ----
+  // ✅ total item count (sum quantities)
+  const cartItemCount = useMemo(
+    () => cart.reduce((sum, it) => sum + Number((it as any).quantity || 0), 0),
+    [cart]
+  );
+
+  // ---- PRODUCTS ----
   const {
     data: productsRaw = [],
     isLoading: productsLoading,
@@ -110,7 +174,13 @@ export const POSPage = () => {
   } = useQuery({
     queryKey: ["products"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("*").order("name");
+      // If you have is_archived in DB, hide archived so POS updates instantly after "delete"
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .eq("is_archived", false)
+        .order("name");
+
       if (error) throw error;
 
       return (data || []).map((p: any) => ({
@@ -120,16 +190,35 @@ export const POSPage = () => {
         image: p.image_url,
       })) as Product[];
     },
-    staleTime: 1000 * 60 * 60 * 24,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
     refetchOnReconnect: true,
+    refetchOnMount: "always",
   });
+
+  // ✅ Make POS auto-refresh when inventory changes (delete/edit/add)
+  useEffect(() => {
+    const channel = supabase
+      .channel("products-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "products" },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["products"] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   const products = productsRaw;
 
   const categories = useMemo(
     () =>
-      Array.from(new Set(products.map((p) => p.category)))
+      Array.from(new Set(products.map((p) => (p as any).category)))
         .filter(Boolean)
         .map((c) => ({ id: c as string, name: c as string })),
     [products]
@@ -139,19 +228,18 @@ export const POSPage = () => {
     const query = searchQuery.trim().toLowerCase();
     const raw = searchQuery.trim();
 
-    return products.filter((product) => {
+    return products.filter((product: any) => {
       const matchesSearch =
         !query ||
-        product.name.toLowerCase().includes(query) ||
-        (!!product.sku && product.sku.toLowerCase().includes(query)) ||
-        (!!product.barcode && product.barcode.includes(raw)) ||
-        (!!product.shortcutCode && product.shortcutCode.toLowerCase() === query);
+        String(product.name || "").toLowerCase().includes(query) ||
+        (!!product.sku && String(product.sku).toLowerCase().includes(query)) ||
+        (!!product.barcode && String(product.barcode).includes(raw)) ||
+        (!!product.shortcutCode && String(product.shortcutCode).toLowerCase() === query);
 
       const matchesCategory =
         !selectedCategory || selectedCategory === "all" || product.category === selectedCategory;
 
-      const matchesMode =
-        posMode === "retail" ? product.type !== "service" : product.type === "service";
+      const matchesMode = posMode === "retail" ? product.type !== "service" : product.type === "service";
 
       return matchesSearch && matchesCategory && matchesMode;
     });
@@ -168,13 +256,14 @@ export const POSPage = () => {
   // ---- TOTALS ----
   const subtotal = useMemo(() => {
     return cart.reduce((sum, item: CartItem) => {
-      const price = item.customPrice ?? item.product.price;
-      const itemTotal = price * item.quantity;
+      const it: any = item as any;
+      const price = it.customPrice ?? it.product.price;
+      const itemTotal = Number(price) * Number(it.quantity);
 
-      const itemDiscount =
-        item.discountType === "percentage"
-          ? itemTotal * (item.discount / 100)
-          : item.discount;
+      const dType = (it.discountType as DiscountType | undefined) ?? "percentage";
+      const dVal = Number(it.discount || 0);
+
+      const itemDiscount = dType === "percentage" ? itemTotal * (dVal / 100) : dVal;
 
       return sum + itemTotal - itemDiscount;
     }, 0);
@@ -188,8 +277,10 @@ export const POSPage = () => {
   }, [activeDiscount, subtotal]);
 
   const discountedSubtotal = subtotal - globalDiscount;
-  const tax = discountedSubtotal * 0.1;
-  const total = discountedSubtotal + tax;
+
+  // ✅ Tax now controlled (default 0). If you want NO TAX now, just keep TAX_RATE_KEY = 0.
+  const tax = round2(discountedSubtotal * (taxRatePct / 100));
+  const total = round2(discountedSubtotal + tax);
 
   // ---- QUICK ENTRY ----
   const handleQuickEntry = useCallback(
@@ -197,16 +288,16 @@ export const POSPage = () => {
       const trimmed = (code || "").trim();
       if (!trimmed) return false;
 
-      const product = products.find(
-        (p) =>
+      const product: any = products.find(
+        (p: any) =>
           p.barcode === trimmed ||
           p.sku === trimmed ||
-          (!!p.shortcutCode && p.shortcutCode.toLowerCase() === trimmed.toLowerCase())
+          (!!p.shortcutCode && String(p.shortcutCode).toLowerCase() === trimmed.toLowerCase())
       );
 
       if (!product) return false;
 
-      if (product.type === "good" && (product.stock_quantity ?? 0) <= 0) {
+      if (product.type === "good" && Number(product.stock_quantity ?? 0) <= 0) {
         toast.error("Out of stock");
         return true;
       }
@@ -219,31 +310,40 @@ export const POSPage = () => {
     [addToCart, products]
   );
 
-  // ---- PAYMENT COMPLETE (prints factual receipt fields) ----
-const handlePaymentComplete = async (method: string) => {
-  const receiptId =
-    globalThis.crypto?.randomUUID?.() ?? `rcpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const receiptNumber = `TM-${Date.now().toString().slice(-6)}`;
-  const timestamp = new Date().toISOString();
+  // ---- PAYMENT COMPLETE ----
+  const handlePaymentComplete = async (method: string) => {
+    if (cart.length === 0) return;
 
-  await completeSale([{ method, amount: total }], total, { receiptId, receiptNumber, timestamp });
+    const cartSnapshot = [...cart];
 
-  setLastOrderData({
-    cart: [...cart],
-    total,
-    cashierName: currentUser?.name || "Staff",
-    customerName: customerName?.trim() || "",
-    receiptId,
-    receiptNumber,
-    paymentMethod: method,
-    timestamp,
-  });
-};
+    const receiptId = makeReceiptId();
+    const receiptNumber = makeReceiptNumber();
+    const timestamp = new Date().toISOString();
 
-  // ---- DISCOUNT ----
+    await completeSale([{ method, amount: total }], total, { receiptId, receiptNumber, timestamp });
+    queryClient.invalidateQueries({ queryKey: ["receipts"] });
+
+    setLastOrderData({
+      cart: cartSnapshot,
+      subtotal,
+      globalDiscount,
+      tax,
+      total,
+      cashierName: currentUser?.name || currentUser?.full_name || "Staff",
+      customerName: customerName?.trim() || "",
+      receiptId,
+      receiptNumber,
+      paymentMethod: method,
+      timestamp,
+      activeDiscount: activeDiscount ?? null,
+      taxRatePct,
+    });
+  };
+
+  // ---- GLOBAL DISCOUNT CODE ----
   const handleApplyDiscount = useCallback(() => {
     if (discountCode.trim().toUpperCase() === "VIP10") {
-      setActiveDiscount({ id: "VIP10", name: "VIP", type: "percentage", value: 10, active: true });
+      setActiveDiscount({ id: "VIP10", name: "VIP", type: "percentage", value: 10, active: true } as any);
       setShowDiscountDialog(false);
       setDiscountCode("");
       toast.success("VIP Discount Applied");
@@ -251,6 +351,65 @@ const handlePaymentComplete = async (method: string) => {
     }
     toast.error("Invalid Discount Code");
   }, [discountCode, setActiveDiscount]);
+
+  // ---- ITEM DISCOUNT ----
+  const openItemDiscount = useCallback(
+    (lineId: string) => {
+      const item: any = cart.find((x: any) => x.lineId === lineId);
+      if (!item) return;
+
+      setDiscountLineId(lineId);
+
+      const dType = (item.discountType as DiscountType | undefined) ?? "percentage";
+      const dVal = Number(item.discount || 0);
+
+      if (dType === "percentage") {
+        setDiscountMode("percent");
+        setDiscountValueRaw(String(dVal || 0));
+      } else {
+        setDiscountMode("amount");
+        setDiscountValueRaw(String(dVal || 0));
+      }
+
+      setShowItemDiscountDialog(true);
+    },
+    [cart]
+  );
+
+  const applyItemDiscount = useCallback(() => {
+    if (!discountLineId) return;
+
+    const raw = Number(String(discountValueRaw || "").trim());
+    if (!Number.isFinite(raw) || raw < 0) {
+      toast.error("Invalid discount");
+      return;
+    }
+
+    const item: any = cart.find((x: any) => x.lineId === discountLineId);
+    if (!item) return;
+
+    const unitPrice = item.customPrice ?? item.product.price;
+    const lineTotal = Number(unitPrice) * Number(item.quantity);
+
+    let type: DiscountType = discountMode === "percent" ? "percentage" : "fixed";
+    let value = raw;
+
+    if (type === "fixed") value = round2(clamp(value, 0, lineTotal));
+    else value = round2(clamp(value, 0, 100));
+
+    // ✅ THIS is what makes the button actually work
+    updateCartItemDiscount(discountLineId, value, type);
+
+    setShowItemDiscountDialog(false);
+    toast.success("Discount applied");
+  }, [discountLineId, discountMode, discountValueRaw, cart, updateCartItemDiscount]);
+
+  const clearItemDiscount = useCallback(() => {
+    if (!discountLineId) return;
+    updateCartItemDiscount(discountLineId, 0, "fixed");
+    setShowItemDiscountDialog(false);
+    toast.success("Discount removed");
+  }, [discountLineId, updateCartItemDiscount]);
 
   // ---- KEYBOARD ----
   const moveSelection = useCallback(
@@ -263,10 +422,10 @@ const handlePaymentComplete = async (method: string) => {
 
   const addSelectedProduct = useCallback(() => {
     if (filteredProducts.length === 0) return;
-    const p = filteredProducts[selectedProductIndex];
+    const p: any = filteredProducts[selectedProductIndex];
     if (!p) return;
 
-    if (p.type === "good" && (p.stock_quantity ?? 0) <= 0) {
+    if (p.type === "good" && Number(p.stock_quantity ?? 0) <= 0) {
       toast.error("Out of stock");
       return;
     }
@@ -290,16 +449,62 @@ const handlePaymentComplete = async (method: string) => {
           setShowDiscountDialog(false);
           return;
         }
+        if (showItemDiscountDialog) {
+          e.preventDefault();
+          setShowItemDiscountDialog(false);
+          return;
+        }
       }
 
-      if (e.key === "F1") { e.preventDefault(); setShowShortcuts((p) => !p); return; }
-      if (e.key === "F2") { e.preventDefault(); searchInputRef.current?.focus(); setFocusArea("search"); return; }
-      if (e.key === "F8") { e.preventDefault(); customerInputRef.current?.focus(); setFocusArea("customer"); return; }
-      if (e.key === "F9") { e.preventDefault(); setShowScanner(true); return; }
-      if (e.key === "F10") { e.preventDefault(); setPosMode(posMode === "retail" ? "service" : "retail"); return; }
-      if (e.key === "F3") { e.preventDefault(); if (cart.length > 0) holdCurrentSale(); return; }
-      if (e.key === "F12") { e.preventDefault(); if (cart.length > 0) paymentPanelRef.current?.openPayment?.(); return; }
-      if (e.key === "F4") { e.preventDefault(); paymentPanelRef.current?.selectPaymentMethod?.(0); return; }
+      if (e.key === "F1") {
+        e.preventDefault();
+        setShowShortcuts((p) => !p);
+        return;
+      }
+      if (e.key === "F2") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        setFocusArea("search");
+        return;
+      }
+      if (e.key === "F8") {
+        e.preventDefault();
+        customerInputRef.current?.focus();
+        setFocusArea("customer");
+        return;
+      }
+      if (e.key === "F9") {
+        e.preventDefault();
+        setShowScanner(true);
+        return;
+      }
+      if (e.key === "F10") {
+        e.preventDefault();
+        setPosMode(posMode === "retail" ? "service" : "retail");
+        return;
+      }
+      if (e.key === "F3") {
+        e.preventDefault();
+        if (cart.length > 0) holdCurrentSale();
+        return;
+      }
+      if (e.key === "F12") {
+        e.preventDefault();
+        if (cart.length > 0) paymentPanelRef.current?.openPayment?.();
+        return;
+      }
+      if (e.key === "F4") {
+        e.preventDefault();
+        paymentPanelRef.current?.selectPaymentMethod?.(0);
+        return;
+      }
+
+      // F6 = Discount code dialog
+      if (e.key === "F6") {
+        e.preventDefault();
+        setShowDiscountDialog(true);
+        return;
+      }
 
       if (targetEditable) {
         if (document.activeElement === searchInputRef.current && e.key === "Enter") {
@@ -307,8 +512,8 @@ const handlePaymentComplete = async (method: string) => {
           e.preventDefault();
           const found = handleQuickEntry(searchQuery);
           if (!found && filteredProducts.length > 0) {
-            const first = filteredProducts[0];
-            if (first.type === "good" && (first.stock_quantity ?? 0) <= 0) return;
+            const first: any = filteredProducts[0];
+            if (first.type === "good" && Number(first.stock_quantity ?? 0) <= 0) return;
             addToCart(first);
             setSearchQuery("");
           }
@@ -316,9 +521,23 @@ const handlePaymentComplete = async (method: string) => {
         return;
       }
 
-      if (e.key === "ArrowDown") { e.preventDefault(); setFocusArea("products"); moveSelection(1); return; }
-      if (e.key === "ArrowUp") { e.preventDefault(); setFocusArea("products"); moveSelection(-1); return; }
-      if (e.key === "Enter") { e.preventDefault(); addSelectedProduct(); return; }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusArea("products");
+        moveSelection(1);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusArea("products");
+        moveSelection(-1);
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addSelectedProduct();
+        return;
+      }
 
       if (e.key === "Delete") {
         if (cart.length > 0) {
@@ -331,6 +550,7 @@ const handlePaymentComplete = async (method: string) => {
     [
       showScanner,
       showDiscountDialog,
+      showItemDiscountDialog,
       searchQuery,
       cart.length,
       posMode,
@@ -350,21 +570,16 @@ const handlePaymentComplete = async (method: string) => {
     return () => window.removeEventListener("keydown", handleKeyDown as any);
   }, [handleKeyDown]);
 
-  // ---- CART HANDLERS (by productId) ----
-const decQty = useCallback(
-  (lineId: string, currentQty: number) => updateCartItemQuantity(lineId, currentQty - 1),
-  [updateCartItemQuantity]
-);
-
-const incQty = useCallback(
-  (lineId: string, currentQty: number) => updateCartItemQuantity(lineId, currentQty + 1),
-  [updateCartItemQuantity]
-);
-
-const removeLine = useCallback(
-  (lineId: string) => removeFromCart(lineId),
-  [removeFromCart]
-);
+  // ---- CART HANDLERS (by lineId) ----
+  const decQty = useCallback(
+    (lineId: string, currentQty: number) => updateCartItemQuantity(lineId, currentQty - 1),
+    [updateCartItemQuantity]
+  );
+  const incQty = useCallback(
+    (lineId: string, currentQty: number) => updateCartItemQuantity(lineId, currentQty + 1),
+    [updateCartItemQuantity]
+  );
+  const removeLine = useCallback((lineId: string) => removeFromCart(lineId), [removeFromCart]);
 
   return (
     <div className="flex h-full flex-col lg:flex-row bg-background">
@@ -382,16 +597,39 @@ const removeLine = useCallback(
             </div>
 
             <div className="text-xs grid grid-cols-2 gap-2">
-              <div><kbd className="bg-muted px-1 rounded">F2</kbd> Search</div>
-              <div><kbd className="bg-muted px-1 rounded">F8</kbd> Customer</div>
-              <div><kbd className="bg-muted px-1 rounded">F9</kbd> Scan</div>
-              <div><kbd className="bg-muted px-1 rounded">F10</kbd> Retail/Service</div>
-              <div><kbd className="bg-muted px-1 rounded">F12</kbd> Pay</div>
-              <div><kbd className="bg-muted px-1 rounded">F3</kbd> Hold Sale</div>
-              <div><kbd className="bg-muted px-1 rounded">↑ ↓</kbd> Navigate products</div>
-              <div><kbd className="bg-muted px-1 rounded">Enter</kbd> Add selected</div>
-              <div><kbd className="bg-muted px-1 rounded">Del</kbd> Clear cart</div>
-              <div><kbd className="bg-muted px-1 rounded">Esc</kbd> Close panels</div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F2</kbd> Search
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F8</kbd> Customer
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F9</kbd> Scan
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F10</kbd> Retail/Service
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F12</kbd> Pay
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F3</kbd> Hold Sale
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">F6</kbd> Discount Code
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">↑ ↓</kbd> Navigate products
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">Enter</kbd> Add selected
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">Del</kbd> Clear cart
+              </div>
+              <div>
+                <kbd className="bg-muted px-1 rounded">Esc</kbd> Close panels
+              </div>
             </div>
           </motion.div>
         )}
@@ -437,9 +675,22 @@ const removeLine = useCallback(
             </Button>
           </div>
 
-          <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => setShowScanner(true)}>
-            <ScanLine className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs gap-1"
+              onClick={() => setShowDiscountDialog(true)}
+              title="Discount code"
+            >
+              <Percent className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Discount</span>
+            </Button>
+
+            <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => setShowScanner(true)}>
+              <ScanLine className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="p-3 space-y-3">
@@ -491,9 +742,7 @@ const removeLine = useCallback(
           ) : isError ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <p className="text-sm">Failed to load products.</p>
-              <p className="text-xs opacity-70">
-                If offline, cached products will show once you have fetched them at least once.
-              </p>
+              <p className="text-xs opacity-70">If offline, cached products will show once you fetched them at least once.</p>
             </div>
           ) : filteredProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground opacity-50">
@@ -504,13 +753,11 @@ const removeLine = useCallback(
             <div
               className={cn(
                 "grid gap-3 pb-24",
-                viewMode === "grid"
-                  ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
-                  : "grid-cols-1"
+                viewMode === "grid" ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" : "grid-cols-1"
               )}
               onMouseEnter={() => setFocusArea("products")}
             >
-              {filteredProducts.map((product, i) => (
+              {filteredProducts.map((product: any, i) => (
                 <ProductCard
                   key={product.id}
                   product={product}
@@ -534,9 +781,7 @@ const removeLine = useCallback(
             <h2 className="font-bold text-lg flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-primary" />
               Current Sale
-              <span className="bg-primary/10 text-primary text-xs rounded-full px-2 py-0.5">
-                {cart.length}
-              </span>
+              <span className="bg-primary/10 text-primary text-xs rounded-full px-2 py-0.5">{cartItemCount}</span>
             </h2>
             {cart.length > 0 && (
               <Button
@@ -564,6 +809,24 @@ const removeLine = useCallback(
               onFocus={() => setFocusArea("customer")}
             />
           </div>
+
+          {activeDiscount && (
+            <div className="flex items-center justify-between text-xs bg-primary/10 border border-primary/20 rounded-lg px-3 py-2">
+              <div className="font-medium text-primary">
+                Global Discount: {activeDiscount.name}{" "}
+                {activeDiscount.type === "percentage" ? `${activeDiscount.value}%` : `$${activeDiscount.value}`}
+              </div>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setActiveDiscount(null as any)}>
+                Remove
+              </Button>
+            </div>
+          )}
+
+          {taxRatePct > 0 && (
+            <div className="text-[11px] text-muted-foreground">
+              Tax is enabled: {taxRatePct}% (you can set it to 0 in Settings later)
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-muted/10" onMouseEnter={() => setFocusArea("cart")}>
@@ -575,29 +838,21 @@ const removeLine = useCallback(
                 <p className="text-xs">Scan or click items to add</p>
               </div>
             ) : (
-              cart.map((item, idx) => (
+              cart.map((item: any, idx) => (
                 <CartItemRow
-                  // If you later support duplicate service lines, you’ll need lineId.
-                  // For now this matches your current context (stacking by product.id).
-                  key={`${item.product.id}-${idx}`}
+                  key={`${item.lineId ?? item.product.id}-${idx}`}
                   item={item}
                   onDec={() => decQty(item.lineId, item.quantity)}
-onInc={() => incQty(item.lineId, item.quantity)}
-onRemove={() => removeLine(item.lineId)}
+                  onInc={() => incQty(item.lineId, item.quantity)}
+                  onRemove={() => removeLine(item.lineId)}
+                  onDiscount={() => openItemDiscount(item.lineId)}
                 />
               ))
             )}
           </AnimatePresence>
         </div>
 
-        <PaymentPanel
-          ref={paymentPanelRef}
-          subtotal={subtotal}
-          discount={globalDiscount}
-          tax={tax}
-          total={total}
-          onComplete={handlePaymentComplete}
-        />
+        <PaymentPanel ref={paymentPanelRef} subtotal={subtotal} discount={globalDiscount} tax={tax} total={total} onComplete={handlePaymentComplete} />
       </div>
 
       <BarcodeScanner
@@ -610,6 +865,7 @@ onRemove={() => removeLine(item.lineId)}
         }}
       />
 
+      {/* GLOBAL DISCOUNT CODE DIALOG */}
       <Dialog open={showDiscountDialog} onOpenChange={setShowDiscountDialog}>
         <DialogContent>
           <DialogHeader>
@@ -622,20 +878,73 @@ onRemove={() => removeLine(item.lineId)}
         </DialogContent>
       </Dialog>
 
+      {/* ITEM DISCOUNT DIALOG */}
+      <Dialog open={showItemDiscountDialog} onOpenChange={setShowItemDiscountDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Item Discount</DialogTitle>
+          </DialogHeader>
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={discountMode === "amount" ? "default" : "outline"}
+              className="flex-1"
+              onClick={() => setDiscountMode("amount")}
+            >
+              <BadgeDollarSign className="w-4 h-4 mr-2" /> Amount ($)
+            </Button>
+            <Button
+              type="button"
+              variant={discountMode === "percent" ? "default" : "outline"}
+              className="flex-1"
+              onClick={() => setDiscountMode("percent")}
+            >
+              <Percent className="w-4 h-4 mr-2" /> Percent (%)
+            </Button>
+          </div>
+
+          <Input
+            value={discountValueRaw}
+            onChange={(e) => setDiscountValueRaw(e.target.value)}
+            placeholder={discountMode === "amount" ? "e.g. 1 (means $1 off)" : "e.g. 10 (means 10%)"}
+            inputMode="decimal"
+            autoFocus
+          />
+
+          <div className="flex gap-2 mt-2">
+            <Button onClick={applyItemDiscount} className="flex-1">
+              Apply
+            </Button>
+            <Button onClick={clearItemDiscount} variant="outline" className="flex-1">
+              Remove
+            </Button>
+          </div>
+
+          <p className="text-xs text-muted-foreground mt-2">
+            Tip: Enter <b>$1</b> and the receipt can show the implied % automatically.
+          </p>
+        </DialogContent>
+      </Dialog>
+
       {/* ✅ INVISIBLE PRINT CONTAINER */}
       <div id="receipt-print-area" className="fixed top-0 left-[-9999px]">
-  {lastOrderData && (
-  <PrintableReceipt
-    cart={lastOrderData.cart}
-    total={lastOrderData.total}
-    cashierName={lastOrderData.cashierName}
-    customerName={lastOrderData.customerName}
-    receiptId={lastOrderData.receiptId}
-    receiptNumber={lastOrderData.receiptNumber}
-    paymentMethod={lastOrderData.paymentMethod}
-  />
-)}
-
+        {lastOrderData && (
+          <PrintableReceipt
+            cart={lastOrderData.cart}
+            total={lastOrderData.total}
+            cashierName={lastOrderData.cashierName}
+            customerName={lastOrderData.customerName}
+            receiptId={lastOrderData.receiptId}
+            receiptNumber={lastOrderData.receiptNumber}
+            paymentMethod={lastOrderData.paymentMethod}
+            subtotal={lastOrderData.subtotal}
+            discount={lastOrderData.globalDiscount}
+            tax={lastOrderData.tax}
+            activeDiscount={lastOrderData.activeDiscount}
+            taxRatePct={lastOrderData.taxRatePct}
+          />
+        )}
       </div>
 
       {isPrinting && (
@@ -660,7 +969,8 @@ const ProductCard = ({
   isSelected: boolean;
   onHover: () => void;
 }) => {
-  const isOutOfStock = product.type === "good" && (product.stock_quantity ?? 0) <= 0;
+  const p: any = product as any;
+  const isOutOfStock = p.type === "good" && Number(p.stock_quantity ?? 0) <= 0;
 
   return (
     <button
@@ -674,32 +984,31 @@ const ProductCard = ({
         isOutOfStock && "opacity-50 grayscale cursor-not-allowed bg-muted"
       )}
     >
-      {product.type === "good" &&
-        !isOutOfStock &&
-        (product.stock_quantity ?? 0) <= (product.lowStockThreshold || 5) && (
-          <span className="absolute top-2 right-2 bg-amber-500/10 text-amber-500 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-            Low Stock
-          </span>
-        )}
+      {p.type === "good" && !isOutOfStock && Number(p.stock_quantity ?? 0) <= Number(p.lowStockThreshold || 5) && (
+        <span className="absolute top-2 right-2 bg-amber-500/10 text-amber-500 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+          Low Stock
+        </span>
+      )}
 
       <div className="w-full aspect-[4/3] rounded-lg bg-muted mb-3 overflow-hidden flex items-center justify-center">
-        {product.image ? (
-          <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+        {p.image ? (
+          <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
         ) : (
           <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center group-hover:scale-110 transition-transform">
-            <span className="font-bold text-sm">{product.name.charAt(0)}</span>
+            <span className="font-bold text-sm">{String(p.name || "?").charAt(0)}</span>
           </div>
         )}
       </div>
 
-      <div className="font-semibold text-sm truncate w-full leading-tight">{product.name}</div>
-      <div className="text-[10px] text-muted-foreground mb-3">{product.category || "General"}</div>
+      <div className="font-semibold text-sm truncate w-full leading-tight">{p.name}</div>
+      <div className="text-[10px] text-muted-foreground mb-3">{p.category || "General"}</div>
 
       <div className="mt-auto flex justify-between items-end w-full">
-        <span className="font-bold text-primary text-base">${product.price}</span>
-        {product.type === "good" && (
+        <span className="font-bold text-primary text-base">${Number(p.price ?? 0)}</span>
+
+        {p.type === "good" && (
           <span className="text-[10px] text-muted-foreground bg-muted px-1.5 rounded">
-            {product.stock_quantity ?? 0} left
+            Stock: {Number(p.stock_quantity ?? 0)}
           </span>
         )}
       </div>
@@ -712,13 +1021,22 @@ const CartItemRow = ({
   onDec,
   onInc,
   onRemove,
+  onDiscount,
 }: {
   item: CartItem;
   onDec: () => void;
   onInc: () => void;
   onRemove: () => void;
+  onDiscount: () => void;
 }) => {
-  const unitPrice = item.customPrice ?? item.product.price;
+  const it: any = item as any;
+  const unitPrice = it.customPrice ?? it.product.price;
+
+  const dType = (it.discountType as DiscountType | undefined) ?? "percentage";
+  const dVal = Number(it.discount || 0);
+
+  const lineTotal = Number(unitPrice) * Number(it.quantity);
+  const impliedPercent = dType === "fixed" && lineTotal > 0 ? round2((dVal / lineTotal) * 100) : null;
 
   return (
     <motion.div
@@ -728,12 +1046,29 @@ const CartItemRow = ({
       className="bg-card border border-border p-2.5 rounded-lg flex justify-between items-center shadow-sm"
     >
       <div className="overflow-hidden flex-1 mr-2">
-        <div className="font-medium text-sm truncate">{item.product.name}</div>
-        <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-          <span className="font-mono text-primary">${unitPrice}</span>
-          <span>x</span>
-          <span>{item.quantity}</span>
+        <div className="font-medium text-sm truncate flex items-center gap-2">
+          {it.product.name}
+          {dVal > 0 && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+              {dType === "percentage" ? `${dVal}% off` : `$${dVal} off`}
+              {impliedPercent !== null && ` (~${impliedPercent}%)`}
+            </span>
+          )}
         </div>
+
+        <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+          <span className="font-mono text-primary">${Number(unitPrice ?? 0)}</span>
+          <span>x</span>
+          <span>{Number(it.quantity ?? 0)}</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={onDiscount}
+          className="mt-1 text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+        >
+          <Percent className="w-3 h-3" /> Discount
+        </button>
       </div>
 
       <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
@@ -741,7 +1076,7 @@ const CartItemRow = ({
           <Minus className="w-3 h-3" />
         </Button>
 
-        <span className="text-xs font-bold w-6 text-center font-mono">{item.quantity}</span>
+        <span className="text-xs font-bold w-6 text-center font-mono">{Number(it.quantity ?? 0)}</span>
 
         <Button type="button" size="icon" variant="ghost" className="h-7 w-7 hover:bg-background shadow-sm" onClick={onInc}>
           <Plus className="w-3 h-3" />
@@ -760,5 +1095,3 @@ const CartItemRow = ({
     </motion.div>
   );
 };
-
-
