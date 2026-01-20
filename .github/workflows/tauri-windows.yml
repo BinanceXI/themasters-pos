@@ -32,8 +32,11 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build Windows installer
-        run: npx tauri build
+      - name: Install Tauri CLI
+  run: npm install -D @tauri-apps/cli
+
+- name: Build Windows installer
+  run: npx tauri build
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
