@@ -30,13 +30,10 @@ jobs:
         run: npm run build
 
       - name: Build Tauri (Windows)
-        uses: tauri-apps/tauri-action@v0
-        with:
-          args: build --bundles msi,nsis
+        run: npx tauri build --bundles msi,nsis
 
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v4
         with:
           name: windows-bundles
-          path: |
-            src-tauri/target/release/bundle/**
+          path: src-tauri/target/release/bundle/**
