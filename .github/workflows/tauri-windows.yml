@@ -29,13 +29,11 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      # ✅ Build Windows installer bundles (MSI/EXE)
       - name: Build Tauri (Windows)
         uses: tauri-apps/tauri-action@v0
         with:
           args: build --bundles msi,nsis
 
-      # ✅ Upload the output so you can download it from Actions
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v4
         with:
