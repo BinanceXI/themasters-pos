@@ -326,37 +326,68 @@ export const InventoryPage = () => {
   };
 
   // ------- Image Upload (online only) -------
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!isAdmin) return toast.error("No permission");
-    if (!navigator.onLine) return toast.error("Image upload needs internet");
-    if (!e.target.files || e.target.files.length === 0) return;
+const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  if (!isAdmin) return toast.error("No permission");
+  if (!navigator.onLine) return toast.error("Image upload needs internet");
+  if (!e.target.files || e.target.files.length === 0) return;
 
-    setIsUploading(true);
-    const file = e.target.files[0];
+  setIsUploading(true);
+  const file = e.target.files[0];
+  if (file.size > 2 * 1024 * 1024) {
+  setIsUploading(false);
+  return toast.error("Image too large. Max 2MB.");
+}
 
-    const fileExt = file.name.split(".").pop() || "png";
-    const fileName = `${Date.now()}.${fileExt}`;
-    const filePath = `${fileName}`;
+  const fileExt = (file.name.split(".").pop() || "png").toLowerCase();
 
-    try {
-      const { error: uploadError } = await supabase.storage
-        .from("product-images")
-        .upload(filePath, file);
-      if (uploadError) throw uploadError;
+  // ✅ make path unique + organized per product
+  const safeId = (newItem.id || uuid()).replace(/[^a-zA-Z0-9_-]/g, "");
+  const rand =
+    (crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const fileName = `${rand}.${fileExt}`;
+  const filePath = `products/${fileName}`; // (safeId not used yet — ok)
 
-      const { data } = supabase.storage
-        .from("product-images")
-        .getPublicUrl(filePath);
+  try {
+    // ✅ upload via Edge Function (NO supabase auth session needed)
+    const arrayBuffer = await file.arrayBuffer();
+   const bytes = new Uint8Array(arrayBuffer);
+let binary = "";
+const chunkSize = 0x8000;
+for (let i = 0; i < bytes.length; i += chunkSize) {
+  binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+}
+const base64 = btoa(binary);
 
-      setNewItem((prev) => ({ ...prev, image: data.publicUrl }));
-      toast.success("Image uploaded");
-    } catch (error: any) {
-      console.error(error);
-      toast.error("Upload failed: " + (error?.message || "Unknown error"));
-    } finally {
-      setIsUploading(false);
-    }
-  };
+    const { data, error } = await supabase.functions.invoke("upload_product_image", {
+  body: {
+  fileName: fileName, // ✅ your unique name
+  contentType: file.type || "image/png",
+  base64,
+},
+  headers: {
+  apikey: import.meta.env.VITE_SUPABASE_ANON_KEY!,
+  Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY!}`,
+  "Content-Type": "application/json",
+},
+});
+
+    if (error) throw error;
+    if (!(data as any)?.publicUrl) throw new Error("Upload failed (no publicUrl returned)");
+
+    setNewItem((prev) => ({ ...prev, image: (data as any).publicUrl }));
+    toast.success("Image uploaded");
+  } catch (error: any) {
+    console.error(error);
+    toast.error(
+  "Upload failed: " +
+    (error?.context?.statusText ||
+     error?.message ||
+     JSON.stringify(error))
+);
+  } finally {
+    setIsUploading(false);
+  }
+};
 
   // ------- Upsert (online OR offline queued) -------
   const saveProductMutation = useMutation({

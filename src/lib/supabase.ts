@@ -16,7 +16,13 @@ export const supabase: SupabaseClient = (() => {
     return createClient("https://invalid.supabase.co", "invalid-anon-key");
   }
 
-  return createClient(supabaseUrl, supabaseAnonKey);
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
 })();
 
 // 3) Types (keep these — they help your app + queries)

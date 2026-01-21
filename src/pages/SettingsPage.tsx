@@ -217,6 +217,12 @@ export const SettingsPage = () => {
   const [myNewPassword, setMyNewPassword] = useState("");
   const [myNewPassword2, setMyNewPassword2] = useState("");
   const [savingMyCreds, setSavingMyCreds] = useState(false);
+    // ✅ Make sure Supabase auth session is loaded before allowing password changes
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(() => setAuthReady(true));
+  }, []);
 
   /* ============================
      STORE SETTINGS (DB)
@@ -616,11 +622,22 @@ export const SettingsPage = () => {
         .eq("id", currentUser.id);
       if (profErr) throw profErr;
 
-      if (myNewPassword) {
+            if (myNewPassword) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!sessionData?.session) {
+          throw new Error(
+            "Auth session missing. Please log out and log in again while online, then retry."
+          );
+        }
+
         const { error: passErr } = await supabase.auth.updateUser({
           password: myNewPassword,
         });
         if (passErr) throw passErr;
+
+        // ✅ Refresh tokens/session after changing password
+        const { error: refreshErr } = await supabase.auth.refreshSession();
+        if (refreshErr) throw refreshErr;
       }
 
       setMyNewPassword("");
@@ -1169,9 +1186,9 @@ export const SettingsPage = () => {
                       </div>
 
                       <div className="flex justify-end">
-                        <Button onClick={saveMyCredentials} disabled={savingMyCreds}>
-                          {savingMyCreds ? <Loader2 className="animate-spin" /> : "Save My Changes"}
-                        </Button>
+                        <Button onClick={saveMyCredentials} disabled={savingMyCreds || !authReady}>
+  {savingMyCreds ? <Loader2 className="animate-spin" /> : "Save My Changes"}
+</Button>
                       </div>
                     </CardContent>
                   </Card>
