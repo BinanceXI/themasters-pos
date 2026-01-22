@@ -29,6 +29,15 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { PrintableReceipt } from "@/components/pos/PrintableReceipt";
 import type { CartItem, Product, Discount } from "@/types/pos";
+// 🔥 THERMAL PRINTER
+import {
+  PRINTER_MODE_KEY,
+  PRINTER_IP_KEY,
+  PRINTER_PORT_KEY,
+  printReceiptSmart,
+} from "@/lib/thermalPrint";
+
+import { tryPrintThermalQueue } from "@/lib/thermalPrint";
 
 // --------------------
 // Offline queue helpers
@@ -127,8 +136,28 @@ export const ReceiptsPage = () => {
   const isAdmin = currentUser?.role === "admin";
   const canVoid = isAdmin || !!currentUser?.permissions?.allowVoid;
   const queryClient = useQueryClient();
+  // 🔥 AUTO-RUN THERMAL QUEUE
+useEffect(() => {
+  tryPrintThermalQueue();
+}, []);
+
+useEffect(() => {
+  const onOnline = () => tryPrintThermalQueue();
+  window.addEventListener("online", onOnline);
+  return () => window.removeEventListener("online", onOnline);
+}, []);
 
   const [activeTab, setActiveTab] = useState<"settings" | "receipts">("settings");
+  // 🔥 PRINTER SETTINGS
+const [printerMode, setPrinterMode] = useState(
+  localStorage.getItem(PRINTER_MODE_KEY) || "tcp"
+);
+const [printerIp, setPrinterIp] = useState(
+  localStorage.getItem(PRINTER_IP_KEY) || ""
+);
+const [printerPort, setPrinterPort] = useState(
+  localStorage.getItem(PRINTER_PORT_KEY) || "9100"
+);
 
   // Preview uses stable fake receipt id + number
   const [previewReceiptId] = useState(
@@ -228,6 +257,40 @@ export const ReceiptsPage = () => {
     if (!isAdmin) return toast.error("Admins only");
     updateSettingsMutation.mutate(formData);
   };
+
+  // 🔥 SAVE PRINTER SETTINGS
+const savePrinterSettings = () => {
+  localStorage.setItem(PRINTER_MODE_KEY, printerMode);
+  localStorage.setItem(PRINTER_IP_KEY, printerIp);
+  localStorage.setItem(PRINTER_PORT_KEY, printerPort);
+
+  toast.success("Printer settings saved");
+  tryPrintThermalQueue(); // 🔥 PRINT ANY QUEUED RECEIPTS
+};
+
+// 🔥 TEST THERMAL PRINT
+const testThermalPrint = async () => {
+  try {
+    await printReceiptSmart({
+      receiptNumber: "TEST-0001",
+      timestamp: new Date().toISOString(),
+      cashierName: "SYSTEM",
+      customerName: "",
+      paymentMethod: "cash",
+      cart: [
+        { product: { name: "TEST ITEM", price: 1 }, quantity: 1 },
+      ],
+      subtotal: 1,
+      discount: 0,
+      tax: 0,
+      total: 1,
+    });
+
+    toast.success("Test print sent");
+  } catch (e: any) {
+    toast.error(e?.message || "Printer not reachable");
+  }
+};
 
   // preview verify link (HashRouter safe)
   const previewVerifyUrl = useMemo(() => {
@@ -544,6 +607,54 @@ export const ReceiptsPage = () => {
               className="space-y-5"
             >
               <SettingsCard title="Store Identity" icon={Settings2}>
+               {/* ✅ THERMAL PRINTER SETTINGS */}
+<SettingsCard title="Thermal Printer" icon={Printer}>
+  <div className="space-y-4">
+
+    <Field label="Printer Mode">
+      <select
+        value={printerMode}
+        onChange={(e) => setPrinterMode(e.target.value)}
+        className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
+        disabled={!isAdmin}
+      >
+        <option value="tcp">Thermal (LAN / Wi-Fi)</option>
+        <option value="browser">Browser (Fallback)</option>
+      </select>
+    </Field>
+
+    <Field label="Printer IP">
+      <Input
+        value={printerIp}
+        onChange={(e) => setPrinterIp(e.target.value)}
+        placeholder="192.168.1.100"
+        className="bg-slate-950 border-slate-800 text-white"
+        disabled={!isAdmin}
+      />
+    </Field>
+
+    <Field label="Printer Port">
+      <Input
+        value={printerPort}
+        onChange={(e) => setPrinterPort(e.target.value)}
+        placeholder="9100"
+        className="bg-slate-950 border-slate-800 text-white"
+        disabled={!isAdmin}
+      />
+    </Field>
+
+    <div className="flex gap-2">
+      <Button onClick={savePrinterSettings} className="flex-1" disabled={!isAdmin}>
+        Save Printer
+      </Button>
+
+      <Button onClick={testThermalPrint} variant="outline" className="flex-1">
+        Test Print
+      </Button>
+    </div>
+
+  </div>
+</SettingsCard>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field label="Business Name">
                     <Input

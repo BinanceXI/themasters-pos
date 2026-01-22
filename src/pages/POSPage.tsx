@@ -30,6 +30,10 @@ import { PrintableReceipt } from "@/components/pos/PrintableReceipt";
 import { useSecureTime } from "@/lib/secureTime";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Camera } from "@capacitor/camera";
+import { enqueueThermalJob } from "@/lib/printQueue";
+import { tryPrintThermalQueue } from "@/lib/thermalPrint";
+
 
 type FocusArea = "search" | "customer" | "products" | "cart";
 type DiscountType = "percentage" | "fixed";
@@ -72,33 +76,63 @@ function round2(n: number) {
 const TAX_RATE_KEY = "themasters_tax_rate"; // store as percentage e.g. "0" or "15"
 
 export const POSPage = () => {
+  const ensureCameraPermission = useCallback(async () => {
+  const perm = await Camera.checkPermissions();
+
+  if (perm.camera !== "granted") {
+    const req = await Camera.requestPermissions({ permissions: ["camera"] });
+    if (req.camera !== "granted") {
+      toast.error("Camera permission denied. Please allow camera access in Settings.");
+      return false;
+    }
+  }
+  return true;
+}, []);
   const queryClient = useQueryClient();
 
   // ---- PRINTING STATE ----
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [isPrinting, setIsPrinting] = useState(false);
 
-  useEffect(() => {
-    if (!lastOrderData) return;
+  // ✅ PRINT + QUEUE (runs AFTER receipt UI is rendered)
+useEffect(() => {
+  if (!lastOrderData) return;
 
-    const timer = setTimeout(() => {
-      try {
-        setIsPrinting(true);
-        window.print();
-      } finally {
-        setTimeout(() => setIsPrinting(false), 700);
-      }
-    }, 350);
+  // show UI "Printing..."
+  setIsPrinting(true);
 
-    return () => clearTimeout(timer);
-  }, [lastOrderData]);
+  // 1) Always queue first (safe)
+  enqueueThermalJob({
+    receiptNumber: lastOrderData.receiptNumber,
+    timestamp: lastOrderData.timestamp,
+    cashierName: lastOrderData.cashierName,
+    customerName: lastOrderData.customerName || "",
+    paymentMethod: lastOrderData.paymentMethod,
+    cart: lastOrderData.cart,
+    subtotal: lastOrderData.subtotal,
+    discount: lastOrderData.globalDiscount,
+    tax: lastOrderData.tax,
+    total: lastOrderData.total,
+  });
+
+  // 2) Print queue (browser mode calls window.print inside thermalPrint.ts)
+  // Delay a bit so PrintableReceipt is definitely in the DOM before window.print()
+  const t = setTimeout(() => {
+    tryPrintThermalQueue();
+    setTimeout(() => setIsPrinting(false), 700);
+  }, 250);
+
+  return () => clearTimeout(t);
+}, [lastOrderData]);
+
 
   // ---- UI STATE ----
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode] = useState<"grid" | "list">("grid");
   const [selectedProductIndex, setSelectedProductIndex] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [showScanner, setShowScanner] = useState(false);
+const [showScanner, setShowScanner] = useState(false);
+const [showMobileCart, setShowMobileCart] = useState(false);
 
   // Global discount code dialog
   const [showDiscountDialog, setShowDiscountDialog] = useState(false);
@@ -312,33 +346,41 @@ export const POSPage = () => {
 
   // ---- PAYMENT COMPLETE ----
   const handlePaymentComplete = async (method: string) => {
-    if (cart.length === 0) return;
+  if (cart.length === 0) return;
 
-    const cartSnapshot = [...cart];
+  const cartSnapshot = [...cart];
 
-    const receiptId = makeReceiptId();
-    const receiptNumber = makeReceiptNumber();
-    const timestamp = new Date().toISOString();
+  const receiptId = makeReceiptId();
+  const receiptNumber = makeReceiptNumber();
+  const timestamp = new Date().toISOString();
 
-    await completeSale([{ method, amount: total }], total, { receiptId, receiptNumber, timestamp });
-    queryClient.invalidateQueries({ queryKey: ["receipts"] });
+  await completeSale([{ method, amount: total }], total, { receiptId, receiptNumber, timestamp });
+  queryClient.invalidateQueries({ queryKey: ["receipts"] });
 
-    setLastOrderData({
-      cart: cartSnapshot,
-      subtotal,
-      globalDiscount,
-      tax,
-      total,
-      cashierName: currentUser?.name || currentUser?.full_name || "Staff",
-      customerName: customerName?.trim() || "",
-      receiptId,
-      receiptNumber,
-      paymentMethod: method,
-      timestamp,
-      activeDiscount: activeDiscount ?? null,
-      taxRatePct,
-    });
-  };
+  // ✅ set receipt data first (so print works)
+  setLastOrderData({
+    cart: cartSnapshot,
+    subtotal,
+    globalDiscount,
+    tax,
+    total,
+    cashierName: currentUser?.name || currentUser?.full_name || "Staff",
+    customerName: customerName?.trim() || "",
+    receiptId,
+    receiptNumber,
+    paymentMethod: method,
+    timestamp,
+    activeDiscount: activeDiscount ?? null,
+    taxRatePct,
+  });
+
+  // ✅ reset POS after sale
+  clearCart();
+  setCustomerName("");
+  setActiveDiscount(null as any);
+  toast.success("Sale completed");
+};
+
 
   // ---- GLOBAL DISCOUNT CODE ----
   const handleApplyDiscount = useCallback(() => {
@@ -582,7 +624,7 @@ export const POSPage = () => {
   const removeLine = useCallback((lineId: string) => removeFromCart(lineId), [removeFromCart]);
 
   return (
-    <div className="flex h-full flex-col lg:flex-row bg-background">
+  <div className="flex h-full flex-col lg:flex-row bg-background">
       <AnimatePresence>
         {showShortcuts && (
           <motion.div
@@ -636,7 +678,7 @@ export const POSPage = () => {
       </AnimatePresence>
 
       {/* LEFT COLUMN */}
-      <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50">
+<div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50">
         <div className="p-3 bg-card border-b border-border flex justify-between items-center gap-3 shadow-sm z-10">
           <div className="text-xs font-mono bg-muted px-2 py-1 rounded flex items-center gap-2">
             <span
@@ -687,7 +729,15 @@ export const POSPage = () => {
               <span className="hidden sm:inline">Discount</span>
             </Button>
 
-            <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => setShowScanner(true)}>
+            <Button
+  size="icon"
+  variant="outline"
+  className="h-8 w-8"
+  onClick={async () => {
+    const ok = await ensureCameraPermission();
+    if (ok) setShowScanner(true);
+  }}
+>
               <ScanLine className="w-4 h-4" />
             </Button>
           </div>
@@ -734,7 +784,7 @@ export const POSPage = () => {
           </div>
         </div>
 
-        <div className="flex-1 p-3 overflow-y-auto min-h-0">
+        <div className="flex-1 p-3 overflow-y-auto min-h-0 max-h-[calc(100vh-160px)]">
           {productsLoading ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-primary" />
@@ -774,8 +824,8 @@ export const POSPage = () => {
         </div>
       </div>
 
-      {/* RIGHT COLUMN */}
-      <div className="w-full lg:w-[420px] flex flex-col bg-card border-l border-border h-[calc(100vh-3.5rem)] lg:h-full shadow-2xl z-20">
+      {/* RIGHT COLUMN (Desktop sticky) */}
+<div className="hidden lg:flex lg:w-[420px] lg:flex-col bg-card border-l border-border lg:h-[100dvh] lg:sticky lg:top-0 shadow-2xl z-20">
         <div className="p-4 border-b space-y-3 bg-card">
           <div className="flex justify-between items-center">
             <h2 className="font-bold text-lg flex items-center gap-2">
@@ -864,6 +914,95 @@ export const POSPage = () => {
           setShowScanner(false);
         }}
       />
+      {/* MOBILE FLOATING CART BUTTON */}
+<div className="fixed bottom-4 right-4 z-40 lg:hidden">
+  <Button
+    onClick={() => setShowMobileCart(true)}
+    className="rounded-full shadow-xl h-12 px-4"
+  >
+    <ShoppingCart className="w-4 h-4 mr-2" />
+    Cart ({cartItemCount})
+  </Button>
+</div>
+
+{/* MOBILE CART DIALOG */}
+<Dialog open={showMobileCart} onOpenChange={setShowMobileCart}>
+  <DialogContent className="p-0 max-w-[95vw] w-full">
+    <div className="flex flex-col bg-card h-[85dvh]">
+
+      {/* HEADER */}
+      <div className="p-4 border-b space-y-3 bg-card">
+        <div className="flex justify-between items-center">
+          <h2 className="font-bold text-lg flex items-center gap-2">
+            <ShoppingCart className="w-5 h-5 text-primary" />
+            Current Sale
+            <span className="bg-primary/10 text-primary text-xs rounded-full px-2 py-0.5">
+              {cartItemCount}
+            </span>
+          </h2>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowMobileCart(false)}
+          >
+            Close
+          </Button>
+        </div>
+
+        <div className="relative">
+          <User className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Customer Name"
+            className="pl-9 h-9 text-sm"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* CART ITEMS */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-muted/10">
+        <AnimatePresence mode="popLayout">
+          {cart.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground opacity-40">
+              <ShoppingCart className="w-12 h-12 mb-2" />
+              <p className="text-sm">Cart is empty</p>
+            </div>
+          ) : (
+            cart.map((item: any, idx) => (
+              <CartItemRow
+                key={`${item.lineId}-${idx}`}
+                item={item}
+                onDec={() => decQty(item.lineId, item.quantity)}
+                onInc={() => incQty(item.lineId, item.quantity)}
+                onRemove={() => removeLine(item.lineId)}
+                onDiscount={() => openItemDiscount(item.lineId)}
+              />
+            ))
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* PAYMENT */}
+      <div className="border-t">
+        <PaymentPanel
+          ref={paymentPanelRef}
+          subtotal={subtotal}
+          discount={globalDiscount}
+          tax={tax}
+          total={total}
+          onComplete={async (method) => {
+            await handlePaymentComplete(method);
+            setShowMobileCart(false);
+          }}
+        />
+      </div>
+
+    </div>
+  </DialogContent>
+</Dialog>
+
 
       {/* GLOBAL DISCOUNT CODE DIALOG */}
       <Dialog open={showDiscountDialog} onOpenChange={setShowDiscountDialog}>

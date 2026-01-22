@@ -23,6 +23,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ProfitAnalysisPage } from "./pages/ProfitAnalysisPage";
 import NotFound from "./pages/NotFound";
 
+const SESSION_KEY = "themasters_session_active";
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -41,13 +43,28 @@ const persister = createSyncStoragePersister({
 });
 
 const AppRoutes = () => {
-  const { currentUser } = usePOS();
+  const { currentUser, setCurrentUser } = usePOS();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    const session = localStorage.getItem("sb-cdxazhylmefeevytokpk-auth-token");
-    if (session || currentUser) setIsAuthenticated(true);
-  }, [currentUser]);
+  const lockSession = () => {
+    sessionStorage.removeItem(SESSION_KEY);
+    setIsAuthenticated(false);
+    setCurrentUser(null as any); // ✅ THIS is the real lock
+  };
+
+  const onVisibility = () => {
+    if (document.hidden) lockSession();
+  };
+
+  window.addEventListener("beforeunload", lockSession);
+  document.addEventListener("visibilitychange", onVisibility);
+
+  return () => {
+    window.removeEventListener("beforeunload", lockSession);
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
+}, [setCurrentUser]);
 
   const handleLogin = () => setIsAuthenticated(true);
 
@@ -57,7 +74,7 @@ const AppRoutes = () => {
       <Route path="/verify/:id" element={<VerifyReceiptPage />} />
 
       {/* ✅ Auth gate */}
-      {!isAuthenticated && !currentUser ? (
+      {!isAuthenticated ? (
         <Route path="*" element={<LoginScreen onLogin={handleLogin} />} />
       ) : (
         <>

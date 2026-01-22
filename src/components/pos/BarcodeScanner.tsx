@@ -34,17 +34,26 @@ export const BarcodeScanner = ({ isOpen, onClose, onScan }: BarcodeScannerProps)
     },
     // ✅ FIX IS HERE: Added ': any' to prevent the red line
     onError(error: any) {
-      if (error?.name === 'NotAllowedError') {
-        toast.error("Camera access denied. Please allow camera permissions.");
-      }
-    },
+  const name = error?.name || "UnknownError";
+
+  if (name === "NotAllowedError") {
+    toast.error("Camera access denied. Allow camera permission in Settings.");
+  } else if (name === "NotFoundError") {
+    toast.error("No camera found on this device.");
+  } else if (name === "NotReadableError") {
+    toast.error("Camera is busy (another app is using it). Close other camera apps.");
+  } else if (name === "OverconstrainedError") {
+    toast.error("Camera constraints not supported on this device.");
+  } else {
+    toast.error(`Camera error: ${name}`);
+  }
+},
     constraints: {
       video: {
         facingMode: 'environment', 
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        // @ts-ignore
-        advanced: [{ torch: flashOn }] 
+        // @ts-ignore 
       }
     }
   });

@@ -1,3 +1,4 @@
+// File: src/components/auth/LoginScreen.tsx
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Lock, ShieldCheck, Wifi, WifiOff, Eye, EyeOff, User } from "lucide-react";
@@ -8,6 +9,7 @@ import { usePOS } from "@/contexts/POSContext";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import themastersLogo from "@/assets/themasters-logo.png";
+import { Capacitor } from "@capacitor/core";
 
 type CachedProfile = {
   id: string;
@@ -49,7 +51,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const { setCurrentUser, syncStatus } = usePOS();
 
   const [username, setUsername] = useState("");
-  const [secret, setSecret] = useState(""); // PIN
+  const [secret, setSecret] = useState(""); // PIN or PASSWORD
   const [showSecret, setShowSecret] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -62,7 +64,6 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   }, []);
 
   // ✅ Prefetch profiles when ONLINE (NOT during login click)
-  // This makes offline login possible later without touching Supabase at login time.
   useEffect(() => {
     let cancelled = false;
 
@@ -102,6 +103,16 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
     };
   }, []);
 
+  // ✅ FIX: Fingerprint handler MUST be here (not inside handleLogin)
+  const handleFingerprintLogin = async () => {
+  if (!Capacitor.isNativePlatform()) {
+    toast.error("Fingerprint works only on Android app");
+    return;
+  }
+
+  toast.error("Fingerprint not enabled yet");
+};
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -111,23 +122,21 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       const u = sanitizeUsername(username);
       const pin = String(secret || "").trim();
 
-      if (!u || !pin) throw new Error("Enter username and PIN");
+      if (!u || !pin) throw new Error("Enter username and password");
 
       // ✅ OFFLINE-FIRST: DO NOT call Supabase here.
       const cache = readProfilesCache();
       const profile = cache.find((p) => sanitizeUsername(p.username) === u);
 
       if (!profile) {
-        throw new Error(
-          "User not found on this device. Connect to internet once (to cache staff) then try again."
-        );
+        throw new Error("User not found on this device. Connect to internet once (to cache staff) then try again.");
       }
 
-      if (String(profile.pin_code || "") !== pin) throw new Error("Invalid PIN");
+      const stored = String(profile.pin_code || "");
+      if (stored !== pin) throw new Error("Invalid credentials");
 
       setCurrentUser({
         id: profile.id,
-        // keep BOTH so your UI never breaks no matter which field is used
         full_name: profile.full_name || profile.username,
         name: profile.full_name || profile.username,
         username: profile.username,
@@ -136,6 +145,8 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         pin_code: profile.pin_code || null,
         active: true,
       } as any);
+
+      sessionStorage.setItem("themasters_session_active", "1");
 
       toast.success(`Welcome ${profile.full_name || profile.username}`);
       onLogin();
@@ -166,13 +177,10 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
             />
           </div>
 
-          <h1 className="text-4xl font-bold text-center mb-4">
-            Tech & Repair Business Solution
-          </h1>
+          <h1 className="text-4xl font-bold text-center mb-4">Tech & Repair Business Solution</h1>
 
           <p className="text-slate-300 text-center max-w-lg text-lg leading-relaxed">
-            Phone repairs, satellite installations, accessories sales —
-            all managed from one powerful offline-first system.
+            Phone repairs, satellite installations, accessories sales — all managed from one powerful offline-first system.
           </p>
 
           <div className="flex gap-3 mt-8 flex-wrap justify-center">
@@ -186,19 +194,13 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
             <Tag label="Offline-First POS" />
           </div>
 
-          <div className="absolute bottom-6 text-xs text-slate-400">
-            © {new Date().getFullYear()} Masters of Technology
-          </div>
+          <div className="absolute bottom-6 text-xs text-slate-400">© {new Date().getFullYear()} Masters of Technology</div>
         </div>
       </div>
 
       {/* RIGHT LOGIN PANEL */}
       <div className="flex-1 flex items-center justify-center px-6">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md space-y-6"
-        >
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md space-y-6">
           {/* MOBILE LOGO */}
           <div className="lg:hidden flex justify-center mb-8">
             <img
@@ -245,7 +247,10 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
                   onChange={(e) => setSecret(e.target.value)}
                   placeholder="••••"
                   className="pl-10 pr-10 h-12"
-                  inputMode="numeric"
+                  autoComplete="current-password"
+                  // ✅ FIX: stop “PIN keyboard” on mobile
+                  inputMode="text"
+                  enterKeyHint="done"
                 />
                 <Button
                   type="button"
@@ -269,6 +274,11 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
               {loading ? "Signing in…" : "Access System"}
             </Button>
 
+            {/* ✅ FIX: this is the exact button placement */}
+            <Button type="button" variant="outline" className="w-full h-12" onClick={handleFingerprintLogin}>
+              Use Fingerprint
+            </Button>
+
             <div className="text-xs text-muted-foreground text-center">
               First time on a new device? Go online once to cache staff accounts.
             </div>
@@ -282,25 +292,13 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 /* --- small helpers --- */
 
 const Tag = ({ label }: { label: string }) => (
-  <span className="px-3 py-1 text-xs rounded-full bg-white/10 border border-white/10">
-    {label}
-  </span>
+  <span className="px-3 py-1 text-xs rounded-full bg-white/10 border border-white/10">{label}</span>
 );
 
-const StatusBadge = ({
-  ok,
-  okLabel,
-  badLabel,
-}: {
-  ok: boolean;
-  okLabel: string;
-  badLabel: string;
-}) => (
+const StatusBadge = ({ ok, okLabel, badLabel }: { ok: boolean; okLabel: string; badLabel: string }) => (
   <span
     className={`flex items-center gap-2 px-3 py-1 text-xs rounded-full border ${
-      ok
-        ? "bg-green-500/20 border-green-500/40 text-green-300"
-        : "bg-amber-500/20 border-amber-500/40 text-amber-300"
+      ok ? "bg-green-500/20 border-green-500/40 text-green-300" : "bg-amber-500/20 border-amber-500/40 text-amber-300"
     }`}
   >
     {ok ? <Wifi size={14} /> : <WifiOff size={14} />}
