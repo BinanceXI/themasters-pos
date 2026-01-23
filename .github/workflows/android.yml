@@ -13,7 +13,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 🔥 FIX: Node 22 (REQUIRED by Capacitor)
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
@@ -26,8 +25,7 @@ jobs:
       - name: Build web (Vite)
         run: npm run build
 
-      # Java 17 is correct for Android + Capacitor
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -37,14 +35,21 @@ jobs:
         run: |
           npx cap add android || echo "Android already added"
 
-      # 🔥 This is where it was failing — now fixed
       - name: Sync Capacitor Android
         run: npx cap sync android
+
+      # ✅ FIX: patch proguard default file for AGP/Gradle 9+
+      - name: Patch Proguard default file
+        run: |
+          sed -i "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" android/app/build.gradle
+          sed -i "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g" android/app/build.gradle
+          echo "---- android/app/build.gradle (proguard line) ----"
+          grep -n "getDefaultProguardFile" -n android/app/build.gradle || true
 
       - name: Build Android APK (Release)
         run: |
           cd android
-          ./gradlew assembleRelease
+          ./gradlew clean assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
