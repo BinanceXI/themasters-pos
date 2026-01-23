@@ -10,42 +10,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # 🔥 FIX: Node 22 (REQUIRED by Capacitor)
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      - name: Install deps
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build web
+      - name: Build web (Vite)
         run: npm run build
 
+      # Java 17 is correct for Android + Capacitor
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Add Android platform if missing
+      - name: Add Android platform (safe)
         run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
+          npx cap add android || echo "Android already added"
 
+      # 🔥 This is where it was failing — now fixed
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-      - name: Build Release APK (unsigned)
-        working-directory: android
-        run: ./gradlew assembleRelease
+      - name: Build Android APK (Release)
+        run: |
+          cd android
+          ./gradlew assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
