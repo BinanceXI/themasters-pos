@@ -38,13 +38,22 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-      # ✅ FIX: patch proguard default file for AGP/Gradle 9+
-      - name: Patch Proguard default file
+      # ✅ IMPORTANT: Patch ALL legacy proguard defaults (app + capacitor + plugins)
+      - name: Patch legacy proguard default file everywhere
         run: |
-          sed -i "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g" android/app/build.gradle
-          sed -i "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g" android/app/build.gradle
-          echo "---- android/app/build.gradle (proguard line) ----"
-          grep -n "getDefaultProguardFile" -n android/app/build.gradle || true
+          echo "Finding legacy proguard-android.txt references..."
+          grep -R "getDefaultProguardFile('proguard-android.txt')" -n android node_modules/@capacitor || true
+          grep -R "getDefaultProguardFile(\"proguard-android.txt\")" -n android node_modules/@capacitor || true
+
+          echo "Patching..."
+          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
+            "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g"
+
+          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
+            "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
+
+          echo "After patch (should be empty):"
+          grep -R "proguard-android.txt" -n android node_modules/@capacitor || true
 
       - name: Build Android APK (Release)
         run: |
