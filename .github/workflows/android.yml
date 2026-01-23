@@ -32,36 +32,54 @@ jobs:
           java-version: 21
 
       - name: Add Android platform (safe)
-        run: |
-          npx cap add android || echo "Android already added"
+        run: npx cap add android || echo "Android already added"
 
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-      # ✅ IMPORTANT: Patch ALL legacy proguard defaults (app + capacitor + plugins)
-      - name: Patch legacy proguard default file everywhere
+      # ✅ Auto-fix duplicate AppTheme.NoActionBar blocks (if present)
+      - name: Fix duplicate AppTheme.NoActionBar in styles.xml
         run: |
-          echo "Finding legacy proguard-android.txt references..."
-          grep -R "getDefaultProguardFile('proguard-android.txt')" -n android node_modules/@capacitor || true
-          grep -R "getDefaultProguardFile(\"proguard-android.txt\")" -n android node_modules/@capacitor || true
+          FILE="android/app/src/main/res/values/styles.xml"
+          if [ -f "$FILE" ]; then
+            echo "Checking $FILE for duplicate AppTheme.NoActionBar..."
+            COUNT=$(grep -c 'name="AppTheme.NoActionBar"' "$FILE" || true)
+            echo "Found $COUNT occurrences"
+            if [ "$COUNT" -gt 1 ]; then
+              echo "Auto-fixing duplicate style blocks..."
+              awk '
+                BEGIN {seen=0; skip=0}
+                /<style name="AppTheme\.NoActionBar"/ {
+                  if (seen==1) {skip=1}
+                  seen=1
+                }
+                skip==1 && /<\/style>/ {skip=0; next}
+                skip==1 {next}
+                {print}
+              ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
+            fi
+            echo "After fix occurrences:"
+            grep -n 'name="AppTheme.NoActionBar"' "$FILE" || true
+          else
+            echo "No styles.xml found at $FILE"
+          fi
 
-          echo "Patching..."
+      # ✅ Patch legacy proguard default everywhere (capacitor + plugins)
+      - name: Patch legacy proguard-android.txt everywhere
+        run: |
+          echo "Patching getDefaultProguardFile('proguard-android.txt') -> proguard-android-optimize.txt"
           find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
             "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g"
-
           find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
             "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
 
-          echo "After patch (should be empty):"
-          grep -R "proguard-android.txt" -n android node_modules/@capacitor || true
-
-      - name: Build Android APK (Release)
+      - name: Build Android Release APK
+        working-directory: android
         run: |
-          cd android
           ./gradlew clean assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: android/app/build/outputs/apk/release/*.apk
