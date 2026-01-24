@@ -14,20 +14,16 @@ interface ReceiptProps {
   cashierName: string;
   customerName?: string;
 
-  receiptId: string; // orders.receipt_id
-  receiptNumber: string; // TM-...
+  receiptId: string;
+  receiptNumber: string;
   paymentMethod: string;
 
-  // ✅ NEW: totals breakdown from POSPage snapshot (so VS doesn't go red)
   subtotal: number;
-  discount: number; // global discount amount ($)
+  discount: number;
   tax: number;
   total: number;
 
-  // ✅ optional: show global discount label (VIP10 etc.)
   activeDiscount?: Discount | null;
-
-  // ✅ optional: show tax rate line if you want
   taxRatePct?: number;
 }
 
@@ -67,9 +63,7 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
   });
 
   const origin =
-    typeof window !== "undefined" && window.location?.origin
-      ? window.location.origin
-      : "https://themasters.tech";
+    typeof window !== "undefined" && window.location?.origin ? window.location.origin : "https://themasters.tech";
 
   const baseUrl = (settings as any)?.qr_code_data || origin;
   const qrUrl = buildVerifyUrl(baseUrl, receiptId);
@@ -87,7 +81,6 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
 
       const lineDiscount = dVal > 0 ? (dType === "percentage" ? lineTotal * (dVal / 100) : dVal) : 0;
       const safeLineDiscount = round2(Math.max(0, Math.min(lineDiscount, lineTotal)));
-
       const finalLine = round2(lineTotal - safeLineDiscount);
 
       const impliedPercent =
@@ -113,65 +106,71 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
   const showGlobalDiscount = Number(discount || 0) > 0;
 
   return (
-    <div className="w-[58mm] p-2 text-black font-mono text-[11px] leading-tight bg-white" ref={ref}>
+    <div
+      ref={ref}
+      className="w-[58mm] p-2 text-black font-mono text-[11px] leading-tight bg-white"
+      style={{ WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" as any }}
+    >
       {/* HEADER */}
-      <div className="text-center mb-4">
+      <div className="text-center mb-2">
         <img
           src={themastersLogo}
           alt="Logo"
-          className="h-12 mx-auto mb-2 object-contain"
+          className="h-10 mx-auto mb-1 object-contain"
           style={{ filter: "grayscale(100%) contrast(200%)" }}
         />
 
-        <h2 className="font-black text-xl uppercase leading-none mb-1">
+        <h2 className="font-black text-[18px] uppercase leading-none mb-0.5">
           {(settings as any)?.business_name || "TheMasters"}
         </h2>
 
-        {(settings as any)?.address && <p className="text-[10px]">{(settings as any).address}</p>}
-        {(settings as any)?.phone && <p className="text-[10px]">{(settings as any).phone}</p>}
-        {(settings as any)?.tax_id && (
-          <p className="text-[10px] font-bold mt-1">TAX: {(settings as any).tax_id}</p>
-        )}
+        {(settings as any)?.address ? <p className="text-[9px]">{(settings as any).address}</p> : null}
+        {(settings as any)?.phone ? <p className="text-[9px]">{(settings as any).phone}</p> : null}
+        {(settings as any)?.tax_id ? <p className="text-[9px] font-bold mt-0.5">TAX: {(settings as any).tax_id}</p> : null}
       </div>
 
-      <div className="border-b-2 border-dashed border-black my-2" />
+      <div className="border-b border-dashed border-black my-2" />
 
       {/* META */}
-      <div className="text-[10px] uppercase mb-2 space-y-1">
+      <div className="text-[9px] uppercase mb-2">
         <div className="flex justify-between">
           <div>
-            <p>{now.toLocaleDateString()}</p>
-            <p>{now.toLocaleTimeString()}</p>
+            <div>{now.toLocaleDateString()}</div>
+            <div>{now.toLocaleTimeString()}</div>
           </div>
           <div className="text-right">
-            <p className="font-bold">#{receiptNumber}</p>
-            <p>Staff: {cashierName}</p>
+            <div className="font-bold">#{receiptNumber}</div>
+            <div>Staff: {cashierName}</div>
           </div>
         </div>
 
-        <p className="text-center font-bold border border-black py-1 mt-2">
+        <div className="text-center font-bold border border-black py-1 mt-2">
           Customer: {customerName?.trim() ? customerName : "Walk-in"}
-        </p>
+        </div>
       </div>
 
-      <div className="border-b-2 border-dashed border-black my-2" />
+      <div className="border-b border-dashed border-black my-2" />
 
       {/* ITEMS */}
-      <div className="space-y-2 mb-4">
+      <div className="space-y-2 mb-3">
         {lineSummaries.map((it) => (
           <div key={it.key}>
-            <div className="flex justify-between text-xs font-bold">
+            {/* ✅ item name on its own line (cleaner on 58mm) */}
+            <div className="text-[11px] font-bold break-words">{it.name}</div>
+
+            {/* ✅ qty x unit on left, line total on right */}
+            <div className="flex justify-between text-[10px]">
               <span>
-                {it.qty} x {it.name}
+                {it.qty} x {fmtMoney(it.unit)}
               </span>
               <span>{fmtMoney(it.lineTotal)}</span>
             </div>
 
-            {/* ✅ item discount line */}
-            {it.lineDiscount > 0 && (
-              <div className="flex justify-between text-[10px]">
+            {/* ✅ item discount */}
+            {it.lineDiscount > 0 ? (
+              <div className="flex justify-between text-[9px]">
                 <span>
-                  Discount{" "}
+                  Disc{" "}
                   {it.discountType === "percentage"
                     ? `(${it.discountValue}%)`
                     : it.impliedPercent !== null
@@ -180,75 +179,71 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
                 </span>
                 <span>-{fmtMoney(it.lineDiscount)}</span>
               </div>
-            )}
+            ) : null}
 
-            {/* ✅ final line after discount */}
-            {it.lineDiscount > 0 && (
-              <div className="flex justify-between text-[10px] font-bold">
+            {/* ✅ line total after discount */}
+            {it.lineDiscount > 0 ? (
+              <div className="flex justify-between text-[9px] font-bold">
                 <span>Line Total</span>
                 <span>{fmtMoney(it.finalLine)}</span>
               </div>
-            )}
-
-            {it.customDescription ? (
-              <p className="text-[10px] italic pl-2">- {it.customDescription}</p>
             ) : null}
+
+            {it.customDescription ? <div className="text-[9px] italic pl-1">- {it.customDescription}</div> : null}
           </div>
         ))}
       </div>
 
-      <div className="border-b-2 border-dashed border-black my-2" />
+      <div className="border-b border-dashed border-black my-2" />
 
       {/* TOTALS */}
-      <div className="space-y-1 text-xs">
-        <div className="flex justify-between">
+      <div className="space-y-1">
+        <div className="flex justify-between text-[11px]">
           <span>Subtotal</span>
           <span>{fmtMoney(subtotal)}</span>
         </div>
 
-        {showGlobalDiscount && (
-          <div className="flex justify-between">
-            <span>
-              Discount{activeDiscount?.name ? ` (${activeDiscount.name})` : ""}
-            </span>
+        {showGlobalDiscount ? (
+          <div className="flex justify-between text-[11px]">
+            <span>Discount{activeDiscount?.name ? ` (${activeDiscount.name})` : ""}</span>
             <span>-{fmtMoney(discount)}</span>
           </div>
-        )}
+        ) : null}
 
-        {showTax && (
-          <div className="flex justify-between">
+        {showTax ? (
+          <div className="flex justify-between text-[11px]">
             <span>Tax{typeof taxRatePct === "number" ? ` (${taxRatePct}%)` : ""}</span>
             <span>{fmtMoney(tax)}</span>
           </div>
-        )}
+        ) : null}
 
-        <div className="flex justify-between font-black text-lg mt-2">
+        <div className="border-t border-black pt-1 mt-1" />
+
+        <div className="flex justify-between font-black text-[16px]">
           <span>TOTAL</span>
           <span>{fmtMoney(total)}</span>
         </div>
 
-        <p className="text-center text-[10px] mt-2 uppercase border-t border-black pt-1">
+        <div className="text-center text-[10px] mt-2 uppercase">
           Paid via {paymentMethod}
-        </p>
+        </div>
       </div>
 
-      {/* FOOTER & QR */}
-      <div className="mt-6 text-center space-y-2">
-        {(settings as any)?.show_qr_code !== false && (
+      {/* QR + FOOTER */}
+      <div className="mt-4 text-center space-y-1">
+        {(settings as any)?.show_qr_code !== false ? (
           <div className="flex flex-col items-center">
-            <QRCodeSVG value={qrUrl} size={90} />
-            <p className="text-[8px] mt-1">Scan to Verify</p>
-            <p className="text-[8px] opacity-70 break-all">ID: {receiptId}</p>
+            <QRCodeSVG value={qrUrl} size={92} />
+            <div className="text-[8px] mt-1">Scan to Verify</div>
+            <div className="text-[8px] opacity-70 break-all">ID: {receiptId}</div>
           </div>
-        )}
+        ) : null}
 
-        {(settings as any)?.footer_message && (
-          <p className="text-[10px] uppercase px-2 whitespace-pre-wrap">
-            {(settings as any).footer_message}
-          </p>
-        )}
+        {(settings as any)?.footer_message ? (
+          <div className="text-[9px] uppercase px-1 whitespace-pre-wrap">{(settings as any).footer_message}</div>
+        ) : null}
 
-        <p className="text-[8px] font-bold mt-2">POWERED BY THEMASTERS</p>
+        <div className="text-[8px] font-bold mt-2">POWERED BY THEMASTERS</div>
       </div>
     </div>
   );

@@ -128,36 +128,33 @@
 
 /* 🖨️ ULTIMATE PRINT FIX */
 @media print {
-  /* 1. Hide EVERYTHING on the page */
   body * {
     visibility: hidden;
     height: 0;
     overflow: hidden;
   }
 
-  /* 2. Reset the Print Area to show */
   #receipt-print-area, #receipt-print-area * {
     visibility: visible;
     height: auto;
     overflow: visible;
-    color: black !important; /* Force Black Text */
-    background: white !important; /* Force White Background */
+    color: black !important;
+    background: white !important;
   }
 
-  /* 3. Position Receipt at Top-Left of Paper */
   #receipt-print-area {
-  position: fixed;
-  left: 0;
-  top: 0;
-    width: 58mm;
-  margin: 0;
-  padding: 0;
-  z-index: 99999;
-  display: block !important;
-}
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 58mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    z-index: 99999;
+    display: block !important;
+  }
 
   @page {
-  margin: 0;
-  size: 58mm auto;
-}
+    size: 58mm auto;
+    margin: 0;
+  }
 }
