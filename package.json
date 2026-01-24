@@ -10,6 +10,9 @@
     "lint": "eslint .",
     "preview": "vite preview"
   },
+  "scripts": {
+  "postinstall": "patch-package"
+}
   "dependencies": {
     "@capacitor/android": "^8.0.1",
     "@capacitor/camera": "^8.0.0",
