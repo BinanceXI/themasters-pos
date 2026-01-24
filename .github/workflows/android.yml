@@ -9,6 +9,11 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
 
+    env:
+      # ✅ Make Vite actually receive these during build
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -21,6 +26,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Optional: show that env exists (won't print secret value)
+      - name: Check env exists
+        run: |
+          test -n "$VITE_SUPABASE_URL"
+          test -n "$VITE_SUPABASE_ANON_KEY"
+          echo "VITE env looks present."
 
       - name: Build web (Vite)
         run: npm run build
@@ -62,7 +74,7 @@ jobs:
           find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
             "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
 
-      # ✅ Build DEBUG (auto-signed, easiest to install)
+      # ✅ Build DEBUG (easy install)
       - name: Build Android DEBUG APK
         working-directory: android
         run: ./gradlew clean assembleDebug
