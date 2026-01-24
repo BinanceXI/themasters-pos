@@ -12,6 +12,15 @@ const encoder = new TextEncoder();
 const ESC = 0x1b;
 const GS = 0x1d;
 
+function leftRight(left: string, right: string, width = 32) {
+  const space = Math.max(1, width - left.length - right.length);
+  return left + " ".repeat(space) + right;
+}
+
+function money(n: number) {
+  return n.toFixed(2);
+}
+
 function bytes(...arr: number[]) {
   return new Uint8Array(arr);
 }
@@ -57,23 +66,25 @@ function buildEscPos(d: ThermalReceiptData) {
   parts.push(textLine("--------------------------------"));
 
   for (const it of d.cart) {
-    const name = String(it.product?.name ?? "Item").slice(0, 32);
-    const qty = Number(it.quantity || 0);
-    const price = Number(it.customPrice ?? it.product?.price ?? 0);
-    const line = qty * price;
+  const name = String(it.product?.name ?? "Item").slice(0, 20);
+  const qty = Number(it.quantity || 0);
+  const price = Number(it.customPrice ?? it.product?.price ?? 0);
+  const total = qty * price;
 
-    parts.push(textLine(name));
-    parts.push(textLine(`  ${qty} x ${price.toFixed(2)} = ${line.toFixed(2)}`));
-  }
+  parts.push(textLine(name));
+  parts.push(textLine(leftRight(`  ${qty} x ${money(price)}`, money(total))));
+}
 
   parts.push(textLine("--------------------------------"));
-  parts.push(textLine(`Subtotal: ${d.subtotal.toFixed(2)}`));
-  if (d.discount > 0) parts.push(textLine(`Discount: -${d.discount.toFixed(2)}`));
-  if (d.tax > 0) parts.push(textLine(`Tax: ${d.tax.toFixed(2)}`));
+ parts.push(textLine(leftRight("Subtotal", money(d.subtotal))));
+if (d.discount > 0)
+  parts.push(textLine(leftRight("Discount", `-${money(d.discount)}`)));
+if (d.tax > 0)
+  parts.push(textLine(leftRight("Tax", money(d.tax))));
 
-  parts.push(bytes(ESC, 0x45, 0x01));
-  parts.push(textLine(`TOTAL: ${d.total.toFixed(2)}`));
-  parts.push(bytes(ESC, 0x45, 0x00));
+parts.push(bytes(ESC, 0x45, 0x01)); // bold
+parts.push(textLine(leftRight("TOTAL", money(d.total))));
+parts.push(bytes(ESC, 0x45, 0x00));
 
   parts.push(textLine("--------------------------------"));
   parts.push(bytes(ESC, 0x61, 0x01));
@@ -81,7 +92,7 @@ function buildEscPos(d: ThermalReceiptData) {
   parts.push(textLine("Thank you!"));
   parts.push(bytes(ESC, 0x61, 0x00));
 
-  parts.push(bytes(ESC, 0x64, 0x04)); // feed
+  parts.push(bytes(ESC, 0x64, 0x02)); // feed less paper
   parts.push(bytes(GS, 0x56, 0x00)); // cut (some printers ignore; safe)
 
   return concat(parts);
