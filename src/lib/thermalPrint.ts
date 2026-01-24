@@ -122,7 +122,7 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
   // Default modes:
   // - Android -> bt (no popup)
   // - Desktop -> browser
-  const mode =
+  let mode =
     (localStorage.getItem(PRINTER_MODE_KEY) || "").trim() ||
     (platform === "android" ? "bt" : "browser");
 
@@ -130,6 +130,9 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
 
   // ✅ ANDROID
   if (platform === "android") {
+    // ✅ SAFETY: if mode is wrong (example "browser"), force bluetooth
+    if (mode !== "bt" && mode !== "tcp") mode = "bt";
+
     if (mode === "bt") {
       // convert bytes -> "latin1 string" because bluetoothSerial.write expects string
       const raw = Array.from(escpos).map((b) => String.fromCharCode(b)).join("");
@@ -137,27 +140,20 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
       return;
     }
 
-    if (mode === "tcp") {
-      const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
-      const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
-      if (!ip) throw new Error("Printer IP not set");
-      await sendTcp(ip, port, escpos);
-      return;
-    }
-
-    // NEVER window.print on android
-    throw new Error(`Unknown printer mode on Android: ${mode}`);
+    // tcp mode
+    const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
+    const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
+    if (!ip) throw new Error("Printer IP not set");
+    await sendTcp(ip, port, escpos);
+    return;
   }
 
-  // ✅ DESKTOP / WINDOWS APP
-  // For now: browser-style printing.
-  // (We’ll replace this with true silent printing for Windows app next.)
+  // ✅ DESKTOP / WINDOWS (Tauri uses the same web print for now)
   if (mode === "browser") {
     window.print();
     return;
   }
 
-  // If someone sets tcp on desktop, we still fallback:
   if (mode === "tcp") {
     window.print();
     return;
@@ -184,8 +180,12 @@ export async function tryPrintThermalQueue() {
     await printReceiptSmart(job as any);
 
     removeThermalJob(job.receiptNumber);
-  } catch (err) {
+    } catch (err: any) {
     console.warn("Thermal print failed (kept queued):", err);
+
+    // ✅ Show error on screen
+    const { toast } = await import("sonner");
+    toast.error(err?.message || "Printing failed");
   } finally {
     processing = false;
   }
