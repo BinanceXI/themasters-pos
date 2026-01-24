@@ -113,7 +113,7 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
   const showGlobalDiscount = Number(discount || 0) > 0;
 
   return (
-    <div className="w-[80mm] p-2 text-black font-mono text-sm leading-tight bg-white" ref={ref}>
+    <div className="w-[58mm] p-2 text-black font-mono text-[11px] leading-tight bg-white" ref={ref}>
       {/* HEADER */}
       <div className="text-center mb-4">
         <img

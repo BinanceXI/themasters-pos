@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import themastersLogo from "@/assets/themasters-logo.png";
 import { Capacitor } from "@capacitor/core";
+import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 
 type CachedProfile = {
   id: string;
@@ -110,7 +111,58 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
     return;
   }
 
-  toast.error("Fingerprint not enabled yet");
+  try {
+    // 1) Check if biometrics are available on the device
+    const available = await NativeBiometric.isAvailable();
+    toast.message("Native: " + Capacitor.isNativePlatform());
+
+    if (!available?.isAvailable) {
+      toast.error("Biometric not available on this device");
+      return;
+    }
+
+    // 2) Require that a user has logged in once (so we know who to auto-login)
+    const lastUser = localStorage.getItem("themasters_last_username");
+    if (!lastUser) {
+      toast.error("Login with PIN once first, then you can use fingerprint.");
+      return;
+    }
+
+    // 3) Ask Android to show fingerprint prompt
+    await NativeBiometric.verifyIdentity({
+      reason: "Use fingerprint to access TheMasters POS",
+      title: "Fingerprint Login",
+      subtitle: "Confirm your identity",
+      description: "Scan your fingerprint",
+    });
+
+    // 4) If biometric ok -> login using cached profile (offline-first)
+    const cache = readProfilesCache();
+    const profile = cache.find((p) => sanitizeUsername(p.username) === sanitizeUsername(lastUser));
+
+    if (!profile) {
+      toast.error("User not found on this device. Go online once to cache staff accounts.");
+      return;
+    }
+
+    setCurrentUser({
+      id: profile.id,
+      full_name: profile.full_name || profile.username,
+      name: profile.full_name || profile.username,
+      username: profile.username,
+      role: profile.role || "cashier",
+      permissions: profile.permissions || {},
+      pin_code: profile.pin_code || null,
+      active: true,
+    } as any);
+
+    sessionStorage.setItem("themasters_session_active", "1");
+    toast.success(`Welcome ${profile.full_name || profile.username}`);
+    onLogin();
+  } catch (err: any) {
+    // If user cancels fingerprint, Android throws — we treat it as normal
+    toast.error(err?.message || "Fingerprint cancelled / failed");
+  }
 };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -147,6 +199,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       } as any);
 
       sessionStorage.setItem("themasters_session_active", "1");
+      localStorage.setItem("themasters_last_username", profile.username);
 
       toast.success(`Welcome ${profile.full_name || profile.username}`);
       onLogin();

@@ -36,7 +36,7 @@ const paymentMethods: {
 
 export const PaymentPanel = forwardRef<PaymentPanelRef, PaymentPanelProps>(
   ({ subtotal, discount = 0, tax, total, onComplete }, ref) => {
-    const { cart, clearCart, holdCurrentSale } = usePOS();
+    const { cart, holdCurrentSale } = usePOS();
 
     const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>("cash");
     const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -81,25 +81,27 @@ export const PaymentPanel = forwardRef<PaymentPanelRef, PaymentPanelProps>(
 
     const cashOk = selectedPayment !== "cash" || (parseFloat(cashReceived || "0") >= total);
 
-    const executePayment = () => {
-      if (cart.length === 0) return;
+    const executePayment = async () => {
+  if (cart.length === 0) return;
+  if (!cashOk) return;
 
-      if (!cashOk) return;
+  const method = selectedPayment || "cash";
 
-      const method = selectedPayment || "cash";
-      setShowPaymentModal(false);
-      setShowSuccessModal(true);
+  setShowPaymentModal(false);
+  setShowSuccessModal(true);
 
-      // Delay for animation, then parent prints/saves
-      setTimeout(() => {
-        onComplete?.(method);
-
-        setShowSuccessModal(false);
-        clearCart(); // parent also clears in your POSContext completeSale, but this ensures UI snaps instantly
-        setCashReceived("");
-        setSelectedPayment("cash");
-      }, 900);
-    };
+  // ✅ Parent (POSPage) must handle: save sale + print + clear cart
+  try {
+    await Promise.resolve(onComplete?.(method));
+  } finally {
+    // keep short success animation then reset local UI
+    setTimeout(() => {
+      setShowSuccessModal(false);
+      setCashReceived("");
+      setSelectedPayment("cash");
+    }, 600);
+  }
+};
 
     const change = selectedPayment === "cash" && cashReceived ? parseFloat(cashReceived) - total : 0;
 

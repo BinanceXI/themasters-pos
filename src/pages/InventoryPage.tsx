@@ -16,6 +16,7 @@ import {
   DollarSign,
   Zap,
   ScanLine,
+  X,
   Image as ImageIcon,
   UploadCloud,
   WifiOff,
@@ -121,6 +122,7 @@ export const InventoryPage = () => {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [showOutOfStockOnly, setShowOutOfStockOnly] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -255,31 +257,42 @@ export const InventoryPage = () => {
   const formStock = parseInt(newItem.stock) || 0;
   const unitProfit = formPrice - formCost;
   const margin = formPrice > 0 ? (unitProfit / formPrice) * 100 : 0;
-  const totalBatchProfit = unitProfit * (newItem.type === "good" ? formStock : 0);
+  const totalBatchProfit = unitProfit * (newItem.type === "good" ? formStock : 0)
 
   // ------- Filter -------
-  const filteredProducts = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return (visibleProducts || []).filter((product: any) => {
-      const matchesCategory =
-        !selectedCategory ||
-        selectedCategory === "all" ||
-        product.category === selectedCategory;
+const filteredProducts = useMemo(() => {
+  const q = searchQuery.trim().toLowerCase();
 
-      if (!matchesCategory) return false;
-      if (!q) return true;
+  return (visibleProducts || []).filter((product: any) => {
+    // ✅ Out of stock filter
+    const matchesOutOfStock =
+      !showOutOfStockOnly ||
+      (product.type === "good" && Number(product.stock_quantity || 0) === 0);
 
-      const shortcutHit =
-        product.shortcutCode && String(product.shortcutCode).toLowerCase() === q;
-      if (shortcutHit) return true;
+    if (!matchesOutOfStock) return false;
 
-      return (
-        String(product.name || "").toLowerCase().includes(q) ||
-        (!!product.sku && String(product.sku).toLowerCase().includes(q)) ||
-        (!!product.shortcutCode && String(product.shortcutCode).toLowerCase().includes(q))
-      );
-    });
-  }, [visibleProducts, searchQuery, selectedCategory]);
+    // ✅ Category filter
+    const matchesCategory =
+      !selectedCategory ||
+      selectedCategory === "all" ||
+      product.category === selectedCategory;
+
+    if (!matchesCategory) return false;
+
+    // ✅ Search filter
+    if (!q) return true;
+
+    const shortcutHit =
+      product.shortcutCode && String(product.shortcutCode).toLowerCase() === q;
+    if (shortcutHit) return true;
+
+    return (
+      String(product.name || "").toLowerCase().includes(q) ||
+      (!!product.sku && String(product.sku).toLowerCase().includes(q)) ||
+      (!!product.shortcutCode && String(product.shortcutCode).toLowerCase().includes(q))
+    );
+  });
+}, [visibleProducts, searchQuery, selectedCategory, showOutOfStockOnly]);
 
   // ------- Helpers -------
   const resetForm = () => {
@@ -579,12 +592,12 @@ const base64 = btoa(binary);
   };
 
   if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <Loader2 className="animate-spin text-primary" />
-      </div>
-    );
-  }
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <Loader2 className="animate-spin text-primary" />
+    </div>
+  );
+}
 
   // ------- Stats (only count non-archived unless admin toggled showArchived) -------
   const statsBase = (products || []).filter((p: any) => !p.is_archived);
@@ -703,11 +716,16 @@ const base64 = btoa(binary);
           color="text-amber-500 bg-amber-500/10"
         />
         <StatBox
-          label="Out of Stock"
-          value={outOfStockCount}
-          icon={Package}
-          color="text-red-500 bg-red-500/10"
-        />
+  label="Out of Stock"
+  value={outOfStockCount}
+  icon={Package}
+  color="text-red-500 bg-red-500/10"
+  onClick={() => {
+    setShowOutOfStockOnly((v) => !v);
+    setSelectedCategory(null); // show across all categories
+  }}
+  active={showOutOfStockOnly}
+/>
       </div>
 
       {/* Search + Categories */}
@@ -723,29 +741,54 @@ const base64 = btoa(binary);
           />
         </div>
 
-        <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-          <Button
-            variant={selectedCategory === null ? "default" : "outline"}
-            size="sm"
-            onClick={() => setSelectedCategory(null)}
-          >
-            All
-          </Button>
-          {categories.map((cat) => (
-            <Button
-              key={cat}
-              variant={selectedCategory === cat ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
-            >
-              {cat}
-            </Button>
-          ))}
-        </div>
+       <div className="w-full overflow-x-auto no-scrollbar touch-pan-x">
+  <div className="flex gap-2 pb-1 min-w-max">
+    <Button
+      variant={selectedCategory === null ? "default" : "outline"}
+      size="sm"
+      onClick={() => setSelectedCategory(null)}
+      className="shrink-0"
+    >
+      All
+    </Button>
+
+    <Button
+  variant={showOutOfStockOnly ? "default" : "outline"}
+  size="sm"
+  onClick={() => {
+    setShowOutOfStockOnly((v) => !v);
+    setSelectedCategory(null); // show across all categories
+  }}
+  className={cn(
+    "shrink-0",
+    showOutOfStockOnly && "bg-red-500/10 text-red-600 border-red-200 hover:bg-red-500/15"
+  )}
+>
+  Out of Stock
+  {showOutOfStockOnly && (
+    <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-500/15">
+      <X className="w-3 h-3" />
+    </span>
+  )}
+</Button>
+
+    {categories.map((cat) => (
+      <Button
+        key={cat}
+        variant={selectedCategory === cat ? "default" : "outline"}
+        size="sm"
+        onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
+        className="shrink-0"
+      >
+        {cat}
+      </Button>
+    ))}
+  </div>
+</div>
       </div>
 
       {/* Table */}
-      <div className="bg-card rounded-xl border border-border overflow-hidden shadow-sm">
+      <div className="bg-card rounded-xl border border-border shadow-sm overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -1199,11 +1242,23 @@ const base64 = btoa(binary);
   );
 };
 
-const StatBox = ({ label, value, color, icon: Icon }: any) => (
+const StatBox = ({ label, value, color, icon: Icon, onClick, active }: any) => (
   <motion.div
     initial={{ opacity: 0, y: 10 }}
     animate={{ opacity: 1, y: 0 }}
-    className={cn("p-4 rounded-xl bg-card border flex items-center justify-between shadow-sm", color)}
+    role={onClick ? "button" : undefined}
+    tabIndex={onClick ? 0 : undefined}
+    onClick={onClick}
+    onKeyDown={(e) => {
+      if (!onClick) return;
+      if (e.key === "Enter" || e.key === " ") onClick();
+    }}
+    className={cn(
+      "p-4 rounded-xl bg-card border flex items-center justify-between shadow-sm select-none",
+      onClick && "cursor-pointer hover:opacity-90 active:scale-[0.99] transition",
+      active && "ring-2 ring-red-500/60",
+      color
+    )}
   >
     <div>
       <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</p>

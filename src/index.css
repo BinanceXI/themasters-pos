@@ -79,7 +79,7 @@
 @layer base {
   * { @apply border-border; }
 
-  html, body {
+    html, body {
     height: 100%;
     width: 100%;
     margin: 0;
@@ -91,6 +91,14 @@
     min-height: 100vh;
     min-height: 100dvh;
 
+    /* ✅ prevent status-bar overlap */
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+
+    /* ✅ better touch behavior */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -100,8 +108,8 @@
 
   /* ✅ root should take full height */
   #root {
-    min-height: 100vh;
-    min-height: 100dvh;
+    /* ✅ full usable height after safe-area padding */
+    min-height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
   }
 
   .font-mono { font-family: 'JetBrains Mono', monospace; }
@@ -138,18 +146,18 @@
 
   /* 3. Position Receipt at Top-Left of Paper */
   #receipt-print-area {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 100%; /* Use full width of selected paper size */
-    margin: 0;
-    padding: 0;
-    z-index: 99999;
-    display: block !important; /* Override 'hidden' class */
-  }
+  position: fixed;
+  left: 0;
+  top: 0;
+    width: 58mm;
+  margin: 0;
+  padding: 0;
+  z-index: 99999;
+  display: block !important;
+}
 
   @page {
-    margin: 0; /* Remove browser margins */
-    size: auto;
-  }
+  margin: 0;
+  size: 58mm auto;
+}
 }

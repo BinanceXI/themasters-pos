@@ -33,6 +33,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Camera } from "@capacitor/camera";
 import { enqueueThermalJob } from "@/lib/printQueue";
 import { tryPrintThermalQueue } from "@/lib/thermalPrint";
+import { createPortal } from "react-dom";
 
 
 type FocusArea = "search" | "customer" | "products" | "cart";
@@ -117,10 +118,14 @@ useEffect(() => {
 
   // 2) Print queue (browser mode calls window.print inside thermalPrint.ts)
   // Delay a bit so PrintableReceipt is definitely in the DOM before window.print()
-  const t = setTimeout(() => {
-    tryPrintThermalQueue();
-    setTimeout(() => setIsPrinting(false), 700);
-  }, 250);
+ const t = setTimeout(() => {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      tryPrintThermalQueue();
+      setTimeout(() => setIsPrinting(false), 700);
+    });
+  });
+}, 50);
 
   return () => clearTimeout(t);
 }, [lastOrderData]);
@@ -624,7 +629,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
   const removeLine = useCallback((lineId: string) => removeFromCart(lineId), [removeFromCart]);
 
   return (
-  <div className="flex h-full flex-col lg:flex-row bg-background">
+  <div className="flex min-h-[100dvh] flex-col lg:flex-row bg-background pt-[env(safe-area-inset-top)]">
       <AnimatePresence>
         {showShortcuts && (
           <motion.div
@@ -761,30 +766,33 @@ const [showMobileCart, setShowMobileCart] = useState(false);
             </div>
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-            <Button
-              size="sm"
-              variant={selectedCategory === null ? "default" : "secondary"}
-              onClick={() => setSelectedCategory(null)}
-              className="h-8 px-4 text-xs rounded-full shrink-0"
-            >
-              All Items
-            </Button>
-            {categories.map((c) => (
-              <Button
-                key={c.id}
-                size="sm"
-                variant={selectedCategory === c.id ? "default" : "outline"}
-                onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}
-                className="h-8 px-4 text-xs rounded-full shrink-0 bg-card hover:bg-muted"
-              >
-                {c.name}
-              </Button>
-            ))}
-          </div>
+          <div className="w-full overflow-x-auto no-scrollbar">
+  <div className="flex gap-2 pb-1 min-w-max touch-pan-x">
+    <Button
+      size="sm"
+      variant={selectedCategory === null ? "default" : "secondary"}
+      onClick={() => setSelectedCategory(null)}
+      className="h-8 px-4 text-xs rounded-full shrink-0"
+    >
+      All Items
+    </Button>
+
+    {categories.map((c) => (
+      <Button
+        key={c.id}
+        size="sm"
+        variant={selectedCategory === c.id ? "default" : "outline"}
+        onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}
+        className="h-8 px-4 text-xs rounded-full shrink-0 bg-card hover:bg-muted"
+      >
+        {c.name}
+      </Button>
+    ))}
+  </div>
+</div>
         </div>
 
-        <div className="flex-1 p-3 overflow-y-auto min-h-0 max-h-[calc(100vh-160px)]">
+        <div className="flex-1 p-3 overflow-y-auto min-h-0 max-h-[calc(100dvh-160px)] pb-28">
           {productsLoading ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="animate-spin text-primary" />
@@ -914,16 +922,29 @@ const [showMobileCart, setShowMobileCart] = useState(false);
           setShowScanner(false);
         }}
       />
-      {/* MOBILE FLOATING CART BUTTON */}
-<div className="fixed bottom-4 right-4 z-40 lg:hidden">
-  <Button
-    onClick={() => setShowMobileCart(true)}
-    className="rounded-full shadow-xl h-12 px-4"
-  >
-    <ShoppingCart className="w-4 h-4 mr-2" />
-    Cart ({cartItemCount})
-  </Button>
-</div>
+      {/* MOBILE FLOATING CART BUTTON (PORTAL FIX) */}
+{typeof document !== "undefined" &&
+  createPortal(
+    <div
+      className="lg:hidden"
+      style={{
+        position: "fixed",
+        right: "16px",
+        bottom: "calc(16px + env(safe-area-inset-bottom))",
+        zIndex: 99999,
+        pointerEvents: "auto",
+      }}
+    >
+      <Button
+        onClick={() => setShowMobileCart(true)}
+        className="rounded-full shadow-xl h-12 px-4"
+      >
+        <ShoppingCart className="w-4 h-4 mr-2" />
+        Cart ({cartItemCount})
+      </Button>
+    </div>,
+    document.body
+  )}
 
 {/* MOBILE CART DIALOG */}
 <Dialog open={showMobileCart} onOpenChange={setShowMobileCart}>
@@ -1066,28 +1087,28 @@ const [showMobileCart, setShowMobileCart] = useState(false);
         </DialogContent>
       </Dialog>
 
-      {/* ✅ INVISIBLE PRINT CONTAINER */}
-      <div id="receipt-print-area" className="fixed top-0 left-[-9999px]">
-        {lastOrderData && (
-          <PrintableReceipt
-            cart={lastOrderData.cart}
-            total={lastOrderData.total}
-            cashierName={lastOrderData.cashierName}
-            customerName={lastOrderData.customerName}
-            receiptId={lastOrderData.receiptId}
-            receiptNumber={lastOrderData.receiptNumber}
-            paymentMethod={lastOrderData.paymentMethod}
-            subtotal={lastOrderData.subtotal}
-            discount={lastOrderData.globalDiscount}
-            tax={lastOrderData.tax}
-            activeDiscount={lastOrderData.activeDiscount}
-            taxRatePct={lastOrderData.taxRatePct}
-          />
-        )}
-      </div>
+      {/* ✅ PRINT AREA (must be ON-SCREEN for print layout, but hidden in normal view) */}
+<div id="receipt-print-area" className="hidden print:block">
+  {lastOrderData && (
+    <PrintableReceipt
+      cart={lastOrderData.cart}
+      total={lastOrderData.total}
+      cashierName={lastOrderData.cashierName}
+      customerName={lastOrderData.customerName}
+      receiptId={lastOrderData.receiptId}
+      receiptNumber={lastOrderData.receiptNumber}
+      paymentMethod={lastOrderData.paymentMethod}
+      subtotal={lastOrderData.subtotal}
+      discount={lastOrderData.globalDiscount}
+      tax={lastOrderData.tax}
+      activeDiscount={lastOrderData.activeDiscount}
+      taxRatePct={lastOrderData.taxRatePct}
+    />
+  )}
+</div>
 
       {isPrinting && (
-        <div className="fixed bottom-4 right-4 bg-card border border-border px-3 py-2 rounded-xl shadow-lg text-xs">
+        <div className="fixed bottom-20 right-4 z-[60] lg:hidden">
           Printing…
         </div>
       )}

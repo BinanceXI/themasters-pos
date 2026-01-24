@@ -1,7 +1,7 @@
-import { ReactNode } from 'react';
-import { POSSidebar } from './POSSidebar';
-import { TopBar } from './TopBar';
-import { MobileBottomNav } from './MobileBottomNav';
+import { ReactNode } from "react";
+import { POSSidebar } from "./POSSidebar";
+import { TopBar } from "./TopBar";
+import { MobileBottomNav } from "./MobileBottomNav";
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -9,13 +9,17 @@ interface MainLayoutProps {
 
 export const MainLayout = ({ children }: MainLayoutProps) => {
   return (
-   <div className="flex min-h-[100dvh] bg-background">
+    <div className="flex h-[100dvh] bg-background overflow-hidden">
       {/* Desktop Sidebar - hidden on mobile */}
       <POSSidebar />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
+
+      {/* ✅ Critical: min-h-0 makes overflow scrolling work inside flex on mobile */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        {/* TopBar already handles its own sticky */}
         <TopBar />
-        <main className="flex-1 overflow-auto pos-scrollbar pb-20 md:pb-0">
+
+        {/* ✅ The ONLY scroll container */}
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pos-scrollbar pb-20 md:pb-0">
           {children}
         </main>
       </div>

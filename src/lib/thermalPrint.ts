@@ -1,10 +1,10 @@
-// File: src/lib/thermalPrint.ts
 import { Capacitor } from "@capacitor/core";
 import type { ThermalJob } from "@/lib/printQueue";
 import { getThermalQueue, removeThermalJob } from "@/lib/printQueue";
+import { printToBluetooth58mm } from "@/lib/androidBluetoothPrint";
 
 // settings keys (used by your Settings UI)
-export const PRINTER_MODE_KEY = "themasters_printer_mode"; // "browser" | "tcp"
+export const PRINTER_MODE_KEY = "themasters_printer_mode"; // "browser" | "tcp" | "bt"
 export const PRINTER_IP_KEY = "themasters_printer_ip"; // e.g. 192.168.1.50
 export const PRINTER_PORT_KEY = "themasters_printer_port"; // usually 9100
 
@@ -82,19 +82,17 @@ function buildEscPos(d: ThermalReceiptData) {
   parts.push(bytes(ESC, 0x61, 0x00));
 
   parts.push(bytes(ESC, 0x64, 0x04)); // feed
-  parts.push(bytes(GS, 0x56, 0x00)); // cut
+  parts.push(bytes(GS, 0x56, 0x00)); // cut (some printers ignore; safe)
 
   return concat(parts);
 }
 
-
 async function sendTcp(ip: string, port: number, data: Uint8Array) {
-  // ❌ NEVER run in web / dev
+  // Only supported if you actually have a TcpSocket plugin installed
   if (Capacitor.getPlatform() !== "android") {
     throw new Error("TCP printing only supported on Android");
   }
 
-  // ✅ plugin is injected by Capacitor at runtime
   const TcpSocket = (window as any)?.Capacitor?.Plugins?.TcpSocket;
   if (!TcpSocket) throw new Error("TCP plugin not available");
 
@@ -108,27 +106,53 @@ async function sendTcp(ip: string, port: number, data: Uint8Array) {
 }
 
 export async function printReceiptSmart(d: ThermalReceiptData) {
-  const mode = (localStorage.getItem(PRINTER_MODE_KEY) || "browser").trim();
+  const platform = Capacitor.getPlatform();
 
+  // Default modes:
+  // - Android -> bt (no popup)
+  // - Desktop -> browser
+  const mode =
+    (localStorage.getItem(PRINTER_MODE_KEY) || "").trim() ||
+    (platform === "android" ? "bt" : "browser");
+
+  const escpos = buildEscPos(d);
+
+  // ✅ ANDROID
+  if (platform === "android") {
+    if (mode === "bt") {
+      // convert bytes -> "latin1 string" because bluetoothSerial.write expects string
+      const raw = Array.from(escpos).map((b) => String.fromCharCode(b)).join("");
+      await printToBluetooth58mm(raw);
+      return;
+    }
+
+    if (mode === "tcp") {
+      const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
+      const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
+      if (!ip) throw new Error("Printer IP not set");
+      await sendTcp(ip, port, escpos);
+      return;
+    }
+
+    // NEVER window.print on android
+    throw new Error(`Unknown printer mode on Android: ${mode}`);
+  }
+
+  // ✅ DESKTOP / WINDOWS APP
+  // For now: browser-style printing.
+  // (We’ll replace this with true silent printing for Windows app next.)
   if (mode === "browser") {
     window.print();
     return;
   }
 
-  const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
-  const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
-  if (!ip) throw new Error("Printer IP not set");
-
-  const data = buildEscPos(d);
-
-  const platform = Capacitor.getPlatform();
-  if (platform === "android") {
-    await sendTcp(ip, port, data);
+  // If someone sets tcp on desktop, we still fallback:
+  if (mode === "tcp") {
+    window.print();
     return;
   }
 
-  // desktop dev fallback
-  window.print();
+  throw new Error(`Unknown printer mode on Desktop: ${mode}`);
 }
 
 // --------------------
