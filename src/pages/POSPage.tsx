@@ -16,6 +16,8 @@ import {
   CloudOff,
   Percent,
   BadgeDollarSign,
+  CalendarPlus,
+  ClipboardList,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -34,6 +36,8 @@ import { Camera } from "@capacitor/camera";
 import { enqueueThermalJob } from "@/lib/printQueue";
 import { tryPrintThermalQueue } from "@/lib/thermalPrint";
 import { createPortal } from "react-dom";
+import { ServiceBookingsDialog } from "@/components/services/ServiceBookingsDialog";
+import { pullRecentServiceBookings, pushUnsyncedServiceBookings } from "@/lib/serviceBookings";
 
 
 type FocusArea = "search" | "customer" | "products" | "cart";
@@ -94,6 +98,30 @@ export const POSPage = () => {
   // ---- PRINTING STATE ----
   const [lastOrderData, setLastOrderData] = useState<any>(null);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [serviceBookingsOpen, setServiceBookingsOpen] = useState(false);
+  const [serviceBookingsMode, setServiceBookingsMode] = useState<"new" | "list">("new");
+  const [serviceBookingsSuggested, setServiceBookingsSuggested] = useState<{
+    serviceId?: string;
+    customerName?: string;
+    totalPrice?: number;
+    clearCartAfter?: boolean;
+  }>({});
+
+  useEffect(() => {
+    const sync = async () => {
+      if (!navigator.onLine) return;
+      try {
+        await pushUnsyncedServiceBookings();
+        await pullRecentServiceBookings(30);
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener("online", sync);
+    sync();
+    return () => window.removeEventListener("online", sync);
+  }, []);
 
   // ✅ PRINT + QUEUE (runs AFTER receipt UI is rendered)
 useEffect(() => {
@@ -194,6 +222,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
     setPosMode,
     currentUser,
     completeSale,
+    recordSaleByItems,
     syncStatus,
   } = usePOS();
 
@@ -321,6 +350,17 @@ const [showMobileCart, setShowMobileCart] = useState(false);
   const tax = round2(discountedSubtotal * (taxRatePct / 100));
   const total = round2(discountedSubtotal + tax);
 
+  const setPosModeSafe = useCallback(
+    (next: any) => {
+      if (cart.length > 0) {
+        toast.error("Clear the cart before switching modes");
+        return;
+      }
+      setPosMode(next);
+    },
+    [cart.length, setPosMode]
+  );
+
   // ---- QUICK ENTRY ----
   const handleQuickEntry = useCallback(
     (code: string) => {
@@ -359,7 +399,12 @@ const [showMobileCart, setShowMobileCart] = useState(false);
   const receiptNumber = makeReceiptNumber();
   const timestamp = new Date().toISOString();
 
-  await completeSale([{ method, amount: total }], total, { receiptId, receiptNumber, timestamp });
+  await completeSale([{ method, amount: total }], total, {
+    receiptId,
+    receiptNumber,
+    timestamp,
+    saleType: posMode === "service" ? "service" : "product",
+  });
   queryClient.invalidateQueries({ queryKey: ["receipts"] });
 
   // ✅ set receipt data first (so print works)
@@ -385,6 +430,78 @@ const [showMobileCart, setShowMobileCart] = useState(false);
   setActiveDiscount(null as any);
   toast.success("Sale completed");
 };
+
+  const serviceProducts = useMemo(
+    () => (products || []).filter((p: any) => p?.type === "service") as Product[],
+    [products]
+  );
+
+  const printAdhocSale = useCallback(
+    (args: {
+      cart: CartItem[];
+      total: number;
+      paymentMethod: string;
+      customerName: string;
+      receiptId: string;
+      receiptNumber: string;
+      timestamp: string;
+    }) => {
+      setLastOrderData({
+        cart: args.cart,
+        subtotal: args.total,
+        globalDiscount: 0,
+        tax: 0,
+        total: args.total,
+        cashierName: currentUser?.name || currentUser?.full_name || "Staff",
+        customerName: args.customerName?.trim() || "",
+        receiptId: args.receiptId,
+        receiptNumber: args.receiptNumber,
+        paymentMethod: args.paymentMethod,
+        timestamp: args.timestamp,
+        activeDiscount: null,
+        taxRatePct: 0,
+      });
+    },
+    [currentUser]
+  );
+
+  const openNewServiceBooking = useCallback(() => {
+    if (posMode !== "service") {
+      toast.error("Switch to Service mode to book a service");
+      return;
+    }
+
+    if (cart.length > 0) {
+      if (cart.length !== 1) {
+        toast.error("Booking requires a single service in the cart");
+        return;
+      }
+      const it: any = cart[0] as any;
+      if (it?.product?.type !== "service") {
+        toast.error("Booking requires a service item");
+        return;
+      }
+      setServiceBookingsSuggested({
+        serviceId: it.product.id,
+        customerName: customerName || "",
+        totalPrice: total,
+        clearCartAfter: true,
+      });
+    } else {
+      setServiceBookingsSuggested({
+        customerName: customerName || "",
+      });
+    }
+
+    setServiceBookingsMode("new");
+    setServiceBookingsOpen(true);
+  }, [cart, customerName, posMode, total]);
+
+  const openServiceBookingsList = useCallback(() => {
+    setServiceBookingsSuggested({});
+    setServiceBookingsMode("list");
+    setServiceBookingsOpen(true);
+  }, []);
 
 
   // ---- GLOBAL DISCOUNT CODE ----
@@ -527,7 +644,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
       }
       if (e.key === "F10") {
         e.preventDefault();
-        setPosMode(posMode === "retail" ? "service" : "retail");
+        setPosModeSafe(posMode === "retail" ? "service" : "retail");
         return;
       }
       if (e.key === "F3") {
@@ -707,7 +824,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => setPosMode("retail")}
+              onClick={() => setPosModeSafe("retail")}
               className={cn("h-7 text-xs rounded-md", posMode === "retail" && "bg-background shadow-sm text-foreground")}
             >
               <Box className="w-3 h-3 mr-1" /> Retail
@@ -715,7 +832,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => setPosMode("service")}
+              onClick={() => setPosModeSafe("service")}
               className={cn("h-7 text-xs rounded-md", posMode === "service" && "bg-background shadow-sm text-foreground")}
             >
               <Zap className="w-3 h-3 mr-1" /> Service
@@ -910,6 +1027,19 @@ const [showMobileCart, setShowMobileCart] = useState(false);
           </AnimatePresence>
         </div>
 
+        {posMode === "service" && (
+          <div className="px-3 pb-3">
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" className="gap-2" onClick={openNewServiceBooking}>
+                <CalendarPlus className="w-4 h-4" /> Book Service
+              </Button>
+              <Button type="button" variant="secondary" className="gap-2" onClick={openServiceBookingsList}>
+                <ClipboardList className="w-4 h-4" /> Bookings
+              </Button>
+            </div>
+          </div>
+        )}
+
         <PaymentPanel ref={paymentPanelRef} subtotal={subtotal} discount={globalDiscount} tax={tax} total={total} onComplete={handlePaymentComplete} />
       </div>
 
@@ -1007,6 +1137,18 @@ const [showMobileCart, setShowMobileCart] = useState(false);
 
       {/* PAYMENT */}
       <div className="border-t">
+        {posMode === "service" && (
+          <div className="p-3 border-b border-border bg-card">
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" className="gap-2" onClick={openNewServiceBooking}>
+                <CalendarPlus className="w-4 h-4" /> Book Service
+              </Button>
+              <Button type="button" variant="secondary" className="gap-2" onClick={openServiceBookingsList}>
+                <ClipboardList className="w-4 h-4" /> Bookings
+              </Button>
+            </div>
+          </div>
+        )}
         <PaymentPanel
           ref={paymentPanelRef}
           subtotal={subtotal}
@@ -1022,8 +1164,33 @@ const [showMobileCart, setShowMobileCart] = useState(false);
 
     </div>
   </DialogContent>
-</Dialog>
+      </Dialog>
 
+
+      <ServiceBookingsDialog
+        open={serviceBookingsOpen}
+        onOpenChange={setServiceBookingsOpen}
+        mode={serviceBookingsMode}
+        services={serviceProducts}
+        suggested={serviceBookingsSuggested}
+        onCreateSale={async ({ items, payments, total: saleTotal, meta, customerName: saleCustomerName }) => {
+          await recordSaleByItems({
+            items,
+            payments: payments as any,
+            total: saleTotal,
+            meta: meta as any,
+            customerName: saleCustomerName,
+          });
+          queryClient.invalidateQueries({ queryKey: ["receipts"] });
+        }}
+        onPrintSale={printAdhocSale}
+        onAfterCreateBooking={() => {
+          if (serviceBookingsSuggested.clearCartAfter) {
+            clearCart();
+            toast.message("Booking saved — cart cleared");
+          }
+        }}
+      />
 
       {/* GLOBAL DISCOUNT CODE DIALOG */}
       <Dialog open={showDiscountDialog} onOpenChange={setShowDiscountDialog}>

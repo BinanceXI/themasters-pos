@@ -69,9 +69,13 @@ export type SaleMeta = {
   receiptId: string;
   receiptNumber: string;
   timestamp: string;
+  saleType?: "product" | "service";
+  bookingId?: string | null;
 };
 
 type Payment = { method: string; amount: number };
+
+type SaleType = "product" | "service";
 
 type OfflineSale = {
   cashierId: string;
@@ -80,6 +84,8 @@ type OfflineSale = {
   payments: Payment[];
   items: CartItem[];
   meta: SaleMeta;
+  saleType?: SaleType;
+  bookingId?: string | null;
   synced: boolean;
   lastError?: string;
 };
@@ -124,6 +130,13 @@ interface POSContextType {
   applyDiscountCode: (code: string) => boolean;
 
   completeSale: (payments: Payment[], total: number, meta: SaleMeta) => Promise<void>;
+  recordSaleByItems: (args: {
+    items: CartItem[];
+    payments: Payment[];
+    total: number;
+    meta: SaleMeta;
+    customerName?: string;
+  }) => Promise<void>;
 
   getSecureTime: () => Date;
 }
@@ -170,6 +183,13 @@ const errorToMessage = (err: any) =>
   err?.error_description ||
   err?.details ||
   (typeof err === "string" ? err : JSON.stringify(err));
+
+const deriveSaleType = (items: CartItem[], fallback: SaleType = "product"): SaleType => {
+  for (const it of items || []) {
+    if ((it as any)?.product?.type === "service") return "service";
+  }
+  return fallback;
+};
 
 /* -------------------------- STOCK DECREMENT RPC ---------------------------- */
 
@@ -284,6 +304,10 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       try {
         const saleItems = ensureLineIds(sale.items || []);
         const saleTime = new Date(sale.meta.timestamp);
+        const saleType: SaleType =
+          (sale as any).saleType || (sale.meta as any)?.saleType || deriveSaleType(saleItems, "product");
+        const bookingId: string | null =
+          (sale as any).bookingId ?? (sale.meta as any)?.bookingId ?? null;
 
         let orderId: string | null = null;
 
@@ -307,6 +331,8 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
               created_at: saleTime,
               receipt_id: sale.meta.receiptId,
               receipt_number: sale.meta.receiptNumber,
+              sale_type: saleType,
+              booking_id: bookingId,
             })
             .select("id")
             .single();
@@ -501,22 +527,28 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   /* ------------------------------ COMPLETE SALE ----------------------------- */
 
-  const completeSale: POSContextType["completeSale"] = async (payments, total, meta) => {
-    if (!currentUser || !cart.length) return;
-
-    const saleItems = ensureLineIds(cart as any);
-
+  const persistSale = async (args: {
+    cashierId: string;
+    customerName: string;
+    total: number;
+    payments: Payment[];
+    items: CartItem[];
+    meta: SaleMeta;
+    saleType: SaleType;
+    bookingId?: string | null;
+  }) => {
+    const saleItems = ensureLineIds(args.items || []);
     const saleData: OfflineSale = {
-      cashierId: currentUser.id,
-      customerName,
-      total,
-      payments,
+      cashierId: args.cashierId,
+      customerName: args.customerName,
+      total: args.total,
+      payments: args.payments,
       items: saleItems,
-      meta,
+      meta: args.meta,
+      saleType: args.saleType,
+      bookingId: args.bookingId ?? null,
       synced: false,
     };
-
-    clearCart();
 
     if (navigator.onLine) {
       try {
@@ -526,11 +558,13 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
             cashier_id: saleData.cashierId,
             customer_name: saleData.customerName,
             total_amount: saleData.total,
-            payment_method: payments[0]?.method || "cash",
+            payment_method: saleData.payments[0]?.method || "cash",
             status: "completed",
-            created_at: new Date(meta.timestamp),
-            receipt_id: meta.receiptId,
-            receipt_number: meta.receiptNumber,
+            created_at: new Date(saleData.meta.timestamp),
+            receipt_id: saleData.meta.receiptId,
+            receipt_number: saleData.meta.receiptNumber,
+            sale_type: saleData.saleType,
+            booking_id: saleData.bookingId ?? null,
           })
           .select("id")
           .single();
@@ -567,6 +601,44 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     toast.success("Saved offline");
   };
 
+  const completeSale: POSContextType["completeSale"] = async (payments, total, meta) => {
+    if (!currentUser || !cart.length) return;
+
+    const saleItems = ensureLineIds(cart as any);
+    const saleType: SaleType = (meta as any)?.saleType || deriveSaleType(saleItems, "product");
+    const bookingId: string | null = (meta as any)?.bookingId ?? null;
+    clearCart();
+    await persistSale({
+      cashierId: currentUser.id,
+      customerName,
+      total,
+      payments,
+      items: saleItems,
+      meta,
+      saleType,
+      bookingId,
+    });
+  };
+
+  const recordSaleByItems: POSContextType["recordSaleByItems"] = async (args) => {
+    if (!currentUser) return;
+    const items = ensureLineIds(args.items || []);
+    if (!items.length) return;
+
+    const saleType: SaleType = (args.meta as any)?.saleType || deriveSaleType(items, "product");
+    const bookingId: string | null = (args.meta as any)?.bookingId ?? null;
+    await persistSale({
+      cashierId: currentUser.id,
+      customerName: args.customerName ?? "",
+      total: args.total,
+      payments: args.payments,
+      items,
+      meta: args.meta,
+      saleType,
+      bookingId,
+    });
+  };
+
   /* --------------------------------- VALUE --------------------------------- */
 
   const value = useMemo<POSContextType>(
@@ -597,6 +669,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       setActiveDiscount,
       applyDiscountCode,
       completeSale,
+      recordSaleByItems,
       getSecureTime: () => new Date(),
     }),
     [
