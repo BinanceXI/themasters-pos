@@ -54,6 +54,15 @@ serve(async (req) => {
     const p = profile as ProfileRow;
     if (p.active === false) return json(403, { error: "Account disabled" });
 
+    // Resolve the Auth user's actual email (some projects may not use the synthetic username@themasterspos.app mapping)
+    let authEmail = `${p.username}@themasterspos.app`;
+    try {
+      const { data: authUser, error: authUserErr } = await admin.auth.admin.getUserById(p.id);
+      if (!authUserErr && authUser?.user?.email) authEmail = authUser.user.email;
+    } catch {
+      // ignore; fallback to synthetic email
+    }
+
     let ok = false;
 
     // Prefer hashed passwords in profile_secrets
@@ -82,13 +91,12 @@ serve(async (req) => {
       // then store a PBKDF2 hash in profile_secrets for offline-first login.
       if (!env.anonKey) return json(401, { error: "Password not set yet. Ask an admin to set your password." });
 
-      const email = `${p.username}@themasterspos.app`;
       const publicClient = createClient(env.url, env.anonKey, {
         auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       });
 
       const { data: signIn, error: signErr } = await publicClient.auth.signInWithPassword({
-        email,
+        email: authEmail,
         password: passRes.password,
       });
       if (signErr || !signIn?.user) return json(401, { error: "Invalid credentials" });
@@ -106,10 +114,9 @@ serve(async (req) => {
     if (!ok) return json(401, { error: "Invalid credentials" });
 
     // ✅ Create a one-time magiclink token hash so the client can mint a real Supabase Auth session JWT
-    const email = `${p.username}@themasterspos.app`;
     const { data: link, error: linkErr } = await admin.auth.admin.generateLink({
       type: "magiclink",
-      email,
+      email: authEmail,
     });
 
     if (linkErr || !link?.properties?.hashed_token) {
