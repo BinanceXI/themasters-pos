@@ -309,7 +309,7 @@ export const SettingsPage = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("*")
+        .select("id, username, full_name, role, permissions, active")
         .order("role")
         .order("full_name");
       if (error) throw error;
@@ -371,6 +371,29 @@ export const SettingsPage = () => {
       toast.success("User deactivated");
     },
     onError: (e: any) => toast.error(e?.message || "Deactivate failed"),
+  });
+
+  const activateUserMutation = useMutation({
+    mutationFn: async (user: any) => {
+      if (!isAdmin) throw new Error("Admins only");
+      if (!navigator.onLine) throw new Error("You are offline");
+
+      if (isSelf(currentUser?.id, user.id)) {
+        throw new Error("You cannot activate your own account");
+      }
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({ active: true })
+        .eq("id", user.id);
+
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["profiles"] });
+      toast.success("User activated");
+    },
+    onError: (e: any) => toast.error(e?.message || "Activate failed"),
   });
 
   const deleteUserMutation = useMutation({
@@ -445,12 +468,22 @@ export const SettingsPage = () => {
             role: nextRole,
             username: nextUsername || null,
             permissions: nextPerms,
-            pin_code: data.pin_code ? String(data.pin_code) : null,
             active: data.active === false ? false : true,
           })
           .eq("id", editingUser.id);
 
         if (error) throw error;
+
+        // Optional: update PIN via Edge Function (hashed server-side)
+        const nextPin = String(data.pin_code || "").trim();
+        if (nextPin) {
+          const { data: pinData, error: pinErr } = await supabase.functions.invoke(
+            "set_staff_pin",
+            { body: { user_id: editingUser.id, pin: nextPin } }
+          );
+          if (pinErr) throw pinErr;
+          if ((pinData as any)?.error) throw new Error((pinData as any).error);
+        }
 
         // optional password reset via Edge Function if you have it
         const nextPassword = String(data.password || "").trim();
@@ -470,11 +503,13 @@ export const SettingsPage = () => {
       const full_name = String(data.name || "").trim();
       const username = sanitizeUsername(data.username);
       const password = String(data.password || "");
+      const pin = String(data.pin_code || "").trim();
 
       if (!full_name) throw new Error("Full name required");
       if (!username) throw new Error("Username required");
       if (username.length < 3) throw new Error("Username must be 3+ characters");
       if (password.length < 6) throw new Error("Password must be at least 6 characters");
+      if (!pin) throw new Error("PIN required");
 
       const role = (data.role || "cashier") as "admin" | "cashier";
       const perms =
@@ -501,7 +536,7 @@ export const SettingsPage = () => {
             full_name,
             role,
             permissions: perms,
-            pin_code: data.pin_code ? String(data.pin_code) : null,
+            pin_code: pin,
           },
         }
       );
@@ -532,8 +567,10 @@ export const SettingsPage = () => {
       if (!navigator.onLine) throw new Error("You are offline");
 
       const username = sanitizeUsername(quickUsername);
+      const pin = String(quickPin || "").trim();
       if (!username) throw new Error("Username required");
       if (username.length < 3) throw new Error("Username must be 3+ characters");
+      if (!pin) throw new Error("PIN required");
 
       const password = `${username}123`;
       const full_name = username
@@ -572,7 +609,7 @@ export const SettingsPage = () => {
             full_name,
             role,
             permissions: perms,
-            pin_code: quickPin ? String(quickPin) : null,
+            pin_code: pin,
           },
         }
       );
@@ -580,7 +617,7 @@ export const SettingsPage = () => {
       if (fnErr) throw fnErr;
       if ((fnData as any)?.error) throw new Error((fnData as any).error);
 
-      return { username, password, pin: quickPin || "" };
+      return { username, password, pin };
     },
     onSuccess: async (res) => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
@@ -681,15 +718,15 @@ export const SettingsPage = () => {
   const handleExportData = async () => {
     if (!isAdmin) return toast.error("Admins only");
 
-    toast.loading("Generating backup...");
-    try {
-      const [products, orders, items, profiles, storeSettings] = await Promise.all([
-        supabase.from("products").select("*"),
-        supabase.from("orders").select("*"),
-        supabase.from("order_items").select("*"),
-        supabase.from("profiles").select("*"),
-        supabase.from("store_settings").select("*").maybeSingle(),
-      ]);
+      toast.loading("Generating backup...");
+      try {
+        const [products, orders, items, profiles, storeSettings] = await Promise.all([
+          supabase.from("products").select("*"),
+          supabase.from("orders").select("*"),
+          supabase.from("order_items").select("*"),
+          supabase.from("profiles").select("id, username, full_name, role, permissions, active"),
+          supabase.from("store_settings").select("*").maybeSingle(),
+        ]);
 
       const backup = {
         timestamp: new Date().toISOString(),
@@ -727,7 +764,8 @@ export const SettingsPage = () => {
       name: user.full_name || "",
       role: user.role || "cashier",
       permissions: { ...DEFAULT_PERMS, ...(user.permissions || {}) },
-      pin_code: user.pin_code || "",
+      // Never read/store PINs from DB on the client. Admins can set a NEW PIN.
+      pin_code: "",
       username: user.username || "",
       password: "",
       active: user.active !== false,
@@ -1091,7 +1129,7 @@ export const SettingsPage = () => {
                           </div>
                         </Field>
 
-                        <Field label="PIN (optional)">
+                        <Field label="PIN">
                           <Input
                             value={quickPin}
                             onChange={(e) => setQuickPin(e.target.value)}
@@ -1302,7 +1340,9 @@ export const SettingsPage = () => {
                                         !active && "text-emerald-600 hover:text-emerald-700"
                                       )}
                                       title={active ? "Deactivate user" : "Activate user"}
-                                      disabled={deactivateUserMutation.isPending || saveUserMutation.isPending}
+                                      disabled={
+                                        deactivateUserMutation.isPending || activateUserMutation.isPending
+                                      }
                                       onClick={() => {
                                         if (active) {
                                           if (
@@ -1313,20 +1353,17 @@ export const SettingsPage = () => {
                                             deactivateUserMutation.mutate(user);
                                           }
                                         } else {
-                                          // Activate = update profile.active true
-                                          saveUserMutation.mutate({
-                                            name: user.full_name || "Staff",
-                                            username: user.username || "",
-                                            password: "",
-                                            role: user.role || "cashier",
-                                            pin_code: user.pin_code || "",
-                                            permissions: user.permissions || {},
-                                            active: true,
-                                          });
+                                          if (
+                                            confirm(
+                                              `Activate ${user.full_name || user.username || "this user"}? They will be able to login again.`
+                                            )
+                                          ) {
+                                            activateUserMutation.mutate(user);
+                                          }
                                         }
                                       }}
                                     >
-                                      {deactivateUserMutation.isPending ? (
+                                      {deactivateUserMutation.isPending || activateUserMutation.isPending ? (
                                         <Loader2 className="w-4 h-4 animate-spin" />
                                       ) : active ? (
                                         <Ban className="w-4 h-4" />
@@ -1880,7 +1917,7 @@ export const SettingsPage = () => {
               </Select>
             </Field>
 
-            <Field label="Login PIN (optional)">
+            <Field label={editingUser ? "New PIN (optional)" : "Login PIN"}>
               <Input
                 type="password"
                 value={userForm.pin_code || ""}

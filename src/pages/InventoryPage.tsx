@@ -257,42 +257,38 @@ export const InventoryPage = () => {
   const formStock = parseInt(newItem.stock) || 0;
   const unitProfit = formPrice - formCost;
   const margin = formPrice > 0 ? (unitProfit / formPrice) * 100 : 0;
-  const totalBatchProfit = unitProfit * (newItem.type === "good" ? formStock : 0)
+  const totalBatchProfit = unitProfit * (newItem.type === "good" ? formStock : 0);
 
   // ------- Filter -------
-const filteredProducts = useMemo(() => {
-  const q = searchQuery.trim().toLowerCase();
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
 
-  return (visibleProducts || []).filter((product: any) => {
-    // ✅ Out of stock filter
-    const matchesOutOfStock =
-      !showOutOfStockOnly ||
-      (product.type === "good" && Number(product.stock_quantity || 0) === 0);
+    return (visibleProducts || []).filter((product: any) => {
+      // ✅ Out of stock filter
+      const matchesOutOfStock =
+        !showOutOfStockOnly || (product.type === "good" && Number(product.stock_quantity || 0) === 0);
 
-    if (!matchesOutOfStock) return false;
+      if (!matchesOutOfStock) return false;
 
-    // ✅ Category filter
-    const matchesCategory =
-      !selectedCategory ||
-      selectedCategory === "all" ||
-      product.category === selectedCategory;
+      // ✅ Category filter
+      const matchesCategory =
+        !selectedCategory || selectedCategory === "all" || product.category === selectedCategory;
 
-    if (!matchesCategory) return false;
+      if (!matchesCategory) return false;
 
-    // ✅ Search filter
-    if (!q) return true;
+      // ✅ Search filter
+      if (!q) return true;
 
-    const shortcutHit =
-      product.shortcutCode && String(product.shortcutCode).toLowerCase() === q;
-    if (shortcutHit) return true;
+      const shortcutHit = product.shortcutCode && String(product.shortcutCode).toLowerCase() === q;
+      if (shortcutHit) return true;
 
-    return (
-      String(product.name || "").toLowerCase().includes(q) ||
-      (!!product.sku && String(product.sku).toLowerCase().includes(q)) ||
-      (!!product.shortcutCode && String(product.shortcutCode).toLowerCase().includes(q))
-    );
-  });
-}, [visibleProducts, searchQuery, selectedCategory, showOutOfStockOnly]);
+      return (
+        String(product.name || "").toLowerCase().includes(q) ||
+        (!!product.sku && String(product.sku).toLowerCase().includes(q)) ||
+        (!!product.shortcutCode && String(product.shortcutCode).toLowerCase().includes(q))
+      );
+    });
+  }, [visibleProducts, searchQuery, selectedCategory, showOutOfStockOnly]);
 
   // ------- Helpers -------
   const resetForm = () => {
@@ -339,68 +335,59 @@ const filteredProducts = useMemo(() => {
   };
 
   // ------- Image Upload (online only) -------
-const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  if (!isAdmin) return toast.error("No permission");
-  if (!navigator.onLine) return toast.error("Image upload needs internet");
-  if (!e.target.files || e.target.files.length === 0) return;
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isAdmin) return toast.error("No permission");
+    if (!navigator.onLine) return toast.error("Image upload needs internet");
+    if (!e.target.files || e.target.files.length === 0) return;
 
-  setIsUploading(true);
-  const file = e.target.files[0];
-  if (file.size > 2 * 1024 * 1024) {
-  setIsUploading(false);
-  return toast.error("Image too large. Max 2MB.");
-}
+    setIsUploading(true);
+    const file = e.target.files[0];
+    if (file.size > 2 * 1024 * 1024) {
+      setIsUploading(false);
+      return toast.error("Image too large. Max 2MB.");
+    }
 
-  const fileExt = (file.name.split(".").pop() || "png").toLowerCase();
+    const fileExt = (file.name.split(".").pop() || "png").toLowerCase();
 
-  // ✅ make path unique + organized per product
-  const safeId = (newItem.id || uuid()).replace(/[^a-zA-Z0-9_-]/g, "");
-  const rand =
-    (crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const fileName = `${rand}.${fileExt}`;
-  const filePath = `products/${fileName}`; // (safeId not used yet — ok)
+    const rand =
+      (crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const fileName = `${rand}.${fileExt}`;
 
-  try {
-    // ✅ upload via Edge Function (NO supabase auth session needed)
-    const arrayBuffer = await file.arrayBuffer();
-   const bytes = new Uint8Array(arrayBuffer);
-let binary = "";
-const chunkSize = 0x8000;
-for (let i = 0; i < bytes.length; i += chunkSize) {
-  binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-}
-const base64 = btoa(binary);
+    try {
+      // ✅ Upload via Edge Function (requires a real signed-in user session)
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
 
-    const { data, error } = await supabase.functions.invoke("upload_product_image", {
-  body: {
-  fileName: fileName, // ✅ your unique name
-  contentType: file.type || "image/png",
-  base64,
-},
-  headers: {
-  apikey: import.meta.env.VITE_SUPABASE_ANON_KEY!,
-  Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY!}`,
-  "Content-Type": "application/json",
-},
-});
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      const base64 = btoa(binary);
 
-    if (error) throw error;
-    if (!(data as any)?.publicUrl) throw new Error("Upload failed (no publicUrl returned)");
+      const { data, error } = await supabase.functions.invoke("upload_product_image", {
+        body: {
+          fileName, // ✅ unique name
+          contentType: file.type || "image/png",
+          base64,
+        },
+      });
 
-    setNewItem((prev) => ({ ...prev, image: (data as any).publicUrl }));
-    toast.success("Image uploaded");
-  } catch (error: any) {
-    console.error(error);
-    toast.error(
-  "Upload failed: " +
-    (error?.context?.statusText ||
-     error?.message ||
-     JSON.stringify(error))
-);
-  } finally {
-    setIsUploading(false);
-  }
-};
+      if (error) throw error;
+      if (!(data as any)?.publicUrl) throw new Error("Upload failed (no publicUrl returned)");
+
+      setNewItem((prev) => ({ ...prev, image: (data as any).publicUrl }));
+      toast.success("Image uploaded");
+    } catch (error: any) {
+      console.error(error);
+      toast.error(
+        "Upload failed: " +
+          (error?.context?.statusText || error?.message || JSON.stringify(error))
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   // ------- Upsert (online OR offline queued) -------
   const saveProductMutation = useMutation({

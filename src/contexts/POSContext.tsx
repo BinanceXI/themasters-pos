@@ -33,7 +33,6 @@ export type POSUser = {
   username: string;
   role: Role;
   permissions: UserPermissions;
-  pin_code?: string | null;
 
   // convenience
   full_name?: string;

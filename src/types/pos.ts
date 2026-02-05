@@ -19,8 +19,7 @@ export interface User {
   email?: string;
   role: UserRole;
   avatar?: string;
-  pin_code?: string;
-permissions: UserPermissions | string[] | any;
+  permissions: UserPermissions | string[] | any;
   active: boolean;
 }
 

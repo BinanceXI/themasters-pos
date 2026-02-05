@@ -82,6 +82,5 @@ export interface Profile {
   id: string;
   full_name: string | null;
   role: "admin" | "cashier";
-  pin_code: string | null;
   permissions: any;
 }

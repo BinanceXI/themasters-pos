@@ -12,41 +12,47 @@ import themastersLogo from "@/assets/themasters-logo.png";
 import { Capacitor } from "@capacitor/core";
 import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 
-type CachedProfile = {
-  id: string;
-  username: string;
-  full_name?: string | null;
-  role?: "admin" | "cashier" | string;
-  permissions?: any;
-  pin_code?: string | null;
-};
-
-const PROFILES_CACHE_KEY = "themasters_profiles_cache_v1";
-
 const sanitizeUsername = (raw: string) =>
   (raw || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]/g, "");
 
-const readProfilesCache = (): CachedProfile[] => {
-  try {
-    const raw = localStorage.getItem(PROFILES_CACHE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as CachedProfile[]) : [];
-  } catch {
-    return [];
-  }
-};
+type VerifyPinResponse =
+  | {
+      ok: true;
+      user: {
+        id: string;
+        username: string;
+        full_name: string | null;
+        role: string | null;
+        permissions: any;
+      };
+      token_hash: string;
+      type: "magiclink";
+    }
+  | { ok?: false; error?: string; details?: string };
 
-const writeProfilesCache = (profiles: CachedProfile[]) => {
-  try {
-    localStorage.setItem(PROFILES_CACHE_KEY, JSON.stringify(profiles || []));
-  } catch {
-    // ignore
-  }
-};
+async function callVerifyPin(username: string, pin: string): Promise<VerifyPinResponse> {
+  const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+
+  if (!url || !anonKey) return { ok: false, error: "Supabase env missing" };
+
+  const res = await fetch(`${url}/functions/v1/verify_pin`, {
+    method: "POST",
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username, pin }),
+  });
+
+  const data = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}`, details: data?.details };
+  return data as VerifyPinResponse;
+}
 
 export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const { setCurrentUser, syncStatus } = usePOS();
@@ -64,106 +70,71 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
     usernameRef.current?.focus();
   }, []);
 
-  // ✅ Prefetch profiles when ONLINE (NOT during login click)
-  useEffect(() => {
-    let cancelled = false;
-
-    const prefetch = async () => {
-      if (!navigator.onLine) return;
-      try {
-        const { data, error: err } = await supabase
-          .from("profiles")
-          .select("id, username, full_name, role, permissions, pin_code")
-          .order("full_name");
-
-        if (cancelled) return;
-        if (err) return;
-
-        const cleaned = (data || [])
-          .filter((p: any) => p?.id && p?.username)
-          .map((p: any) => ({
-            id: String(p.id),
-            username: String(p.username),
-            full_name: p.full_name ?? null,
-            role: p.role ?? "cashier",
-            permissions: p.permissions ?? {},
-            pin_code: p.pin_code ?? null,
-          })) as CachedProfile[];
-
-        writeProfilesCache(cleaned);
-      } catch {
-        // ignore
-      }
-    };
-
-    prefetch();
-    window.addEventListener("online", prefetch);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("online", prefetch);
-    };
-  }, []);
-
-  // ✅ FIX: Fingerprint handler MUST be here (not inside handleLogin)
+  // ✅ Fingerprint unlock: requires an existing Supabase auth session
   const handleFingerprintLogin = async () => {
-  if (!Capacitor.isNativePlatform()) {
-    toast.error("Fingerprint works only on Android app");
-    return;
-  }
-
-  try {
-    // 1) Check if biometrics are available on the device
-    const available = await NativeBiometric.isAvailable();
-    toast.message("Native: " + Capacitor.isNativePlatform());
-
-    if (!available?.isAvailable) {
-      toast.error("Biometric not available on this device");
+    if (!Capacitor.isNativePlatform()) {
+      toast.error("Fingerprint works only on Android app");
       return;
     }
 
-    // 2) Require that a user has logged in once (so we know who to auto-login)
-    const lastUser = localStorage.getItem("themasters_last_username");
-    if (!lastUser) {
-      toast.error("Login with PIN once first, then you can use fingerprint.");
-      return;
+    try {
+      const available = await NativeBiometric.isAvailable();
+      if (!available?.isAvailable) {
+        toast.error("Biometric not available on this device");
+        return;
+      }
+
+      await NativeBiometric.verifyIdentity({
+        reason: "Use fingerprint to access TheMasters POS",
+        title: "Fingerprint Login",
+        subtitle: "Confirm your identity",
+        description: "Scan your fingerprint",
+      });
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session?.access_token) {
+        toast.error("No active session. Please sign in with PIN.");
+        return;
+      }
+
+      const { data: userData, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !userData?.user) {
+        toast.error("Session expired. Please sign in with PIN.");
+        return;
+      }
+
+      const { data: profile, error: profErr } = await supabase
+        .from("profiles")
+        .select("id, username, full_name, role, permissions, active")
+        .eq("id", userData.user.id)
+        .maybeSingle();
+
+      if (profErr || !profile) {
+        toast.error("Failed to load profile");
+        return;
+      }
+      if ((profile as any)?.active === false) {
+        toast.error("Account disabled");
+        return;
+      }
+
+      setCurrentUser({
+        id: String((profile as any).id),
+        full_name: (profile as any).full_name || (profile as any).username,
+        name: (profile as any).full_name || (profile as any).username,
+        username: (profile as any).username,
+        role: (profile as any).role || "cashier",
+        permissions: (profile as any).permissions || {},
+        active: true,
+      } as any);
+
+      sessionStorage.setItem("themasters_session_active", "1");
+      toast.success(`Welcome ${(profile as any).full_name || (profile as any).username}`);
+      onLogin();
+    } catch (err: any) {
+      toast.error(err?.message || "Fingerprint cancelled / failed");
     }
-
-    // 3) Ask Android to show fingerprint prompt
-    await NativeBiometric.verifyIdentity({
-      reason: "Use fingerprint to access TheMasters POS",
-      title: "Fingerprint Login",
-      subtitle: "Confirm your identity",
-      description: "Scan your fingerprint",
-    });
-
-    // 4) If biometric ok -> login using cached profile (offline-first)
-    const cache = readProfilesCache();
-    const profile = cache.find((p) => sanitizeUsername(p.username) === sanitizeUsername(lastUser));
-
-    if (!profile) {
-      toast.error("User not found on this device. Go online once to cache staff accounts.");
-      return;
-    }
-
-    setCurrentUser({
-      id: profile.id,
-      full_name: profile.full_name || profile.username,
-      name: profile.full_name || profile.username,
-      username: profile.username,
-      role: profile.role || "cashier",
-      permissions: profile.permissions || {},
-      pin_code: profile.pin_code || null,
-      active: true,
-    } as any);
-
-    sessionStorage.setItem("themasters_session_active", "1");
-    toast.success(`Welcome ${profile.full_name || profile.username}`);
-    onLogin();
-  } catch (err: any) {
-    // If user cancels fingerprint, Android throws — we treat it as normal
-    toast.error(err?.message || "Fingerprint cancelled / failed");
-  }
-};
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,34 +145,36 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       const u = sanitizeUsername(username);
       const pin = String(secret || "").trim();
 
-      if (!u || !pin) throw new Error("Enter username and password");
+      if (!u || !pin) throw new Error("Enter username and PIN");
+      if (!navigator.onLine) throw new Error("Internet required for secure login");
 
-      // ✅ OFFLINE-FIRST: DO NOT call Supabase here.
-      const cache = readProfilesCache();
-      const profile = cache.find((p) => sanitizeUsername(p.username) === u);
-
-      if (!profile) {
-        throw new Error("User not found on this device. Connect to internet once (to cache staff) then try again.");
+      // 1) Verify PIN server-side (no PINs downloaded to device)
+      const verify = await callVerifyPin(u, pin);
+      if (!("ok" in verify) || !verify.ok) {
+        throw new Error(verify?.error || "Invalid credentials");
       }
 
-      const stored = String(profile.pin_code || "");
-      if (stored !== pin) throw new Error("Invalid credentials");
+      // 2) Mint a real Supabase Auth session (gives us a real user JWT for edge functions + RLS)
+      const { error: otpErr } = await supabase.auth.verifyOtp({
+        token_hash: verify.token_hash,
+        type: "magiclink",
+      });
+      if (otpErr) throw otpErr;
 
       setCurrentUser({
-        id: profile.id,
-        full_name: profile.full_name || profile.username,
-        name: profile.full_name || profile.username,
-        username: profile.username,
-        role: profile.role || "cashier",
-        permissions: profile.permissions || {},
-        pin_code: profile.pin_code || null,
+        id: verify.user.id,
+        full_name: verify.user.full_name || verify.user.username,
+        name: verify.user.full_name || verify.user.username,
+        username: verify.user.username,
+        role: (verify.user.role as any) || "cashier",
+        permissions: verify.user.permissions || {},
         active: true,
       } as any);
 
       sessionStorage.setItem("themasters_session_active", "1");
-      localStorage.setItem("themasters_last_username", profile.username);
+      localStorage.setItem("themasters_last_username", verify.user.username);
 
-      toast.success(`Welcome ${profile.full_name || profile.username}`);
+      toast.success(`Welcome ${verify.user.full_name || verify.user.username}`);
       onLogin();
     } catch (err: any) {
       setError(err?.message || "Login failed");
@@ -333,7 +306,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
             </Button>
 
             <div className="text-xs text-muted-foreground text-center">
-              First time on a new device? Go online once to cache staff accounts.
+              Secure sign-in uses a server-side PIN check.
             </div>
           </form>
         </motion.div>

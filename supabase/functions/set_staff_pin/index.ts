@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
+import { hashPin, validatePin } from "../_shared/pin.ts";
 import {
   getBearerToken,
   getSupabaseEnv,
@@ -27,10 +28,8 @@ serve(async (req) => {
       data: { user },
       error: userErr,
     } = await userClient.auth.getUser();
-
     if (userErr || !user) return json(401, { error: "Invalid user session" });
 
-    // ✅ Admin check (role stored in profiles)
     const admin = supabaseAdminClient(env);
     const { data: caller, error: callerErr } = await admin
       .from("profiles")
@@ -44,18 +43,28 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({} as any));
     const user_id = String(body?.user_id || "").trim();
+    const pinRes = validatePin(body?.pin);
+
     if (!user_id) return json(400, { error: "Missing user_id" });
-    if (user_id === user.id) return json(400, { error: "You cannot delete your own account" });
+    if (!pinRes.ok) return json(400, { error: pinRes.reason });
 
-    const { error: delErr } = await admin.auth.admin.deleteUser(user_id);
-    if (delErr) return json(400, { error: delErr.message });
+    const hashed = await hashPin(pinRes.pin);
+    const { error: upErr } = await admin.from("profile_secrets").upsert({
+      id: user_id,
+      ...hashed,
+      updated_at: new Date().toISOString(),
+    });
 
-    // Best-effort cleanup (may fail if FK constraints exist)
-    await admin.from("profile_secrets").delete().eq("id", user_id);
-    await admin.from("profiles").delete().eq("id", user_id);
+    if (upErr) {
+      return json(500, { error: "PIN update failed", details: upErr.message });
+    }
+
+    // Best-effort: clear legacy pin_code
+    await admin.from("profiles").update({ pin_code: null as any }).eq("id", user_id);
 
     return json(200, { success: true });
   } catch (e: any) {
     return json(500, { error: "Unhandled error", details: e?.message || String(e) });
   }
 });
+
