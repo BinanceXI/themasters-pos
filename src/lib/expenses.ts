@@ -22,6 +22,7 @@ export type ExpenseRange = {
   to?: string; // ISO
 };
 
+// Offline sync uses an "expense_queue" where each expense id is either queued for upsert or queued for delete.
 type ExpenseQueueItem =
   | { id: string; op: "upsert"; expense: Expense; ts: number; lastError?: string }
   | { id: string; op: "delete"; ts: number; lastError?: string };
@@ -439,4 +440,3 @@ async function pullRecentExpenses(daysBack: number): Promise<void> {
     await upsertExpenseLocal(row as Expense);
   }
 }
-
