@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { hashPin, validatePin } from "../_shared/pin.ts";
+import { hashPassword, validatePassword } from "../_shared/password.ts";
 import {
   getBearerToken,
   getSupabaseEnv,
@@ -43,12 +43,14 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({} as any));
     const user_id = String(body?.user_id || "").trim();
-    const pinRes = validatePin(body?.pin);
+    const passRes = validatePassword(body?.password);
 
     if (!user_id) return json(400, { error: "Missing user_id" });
-    if (!pinRes.ok) return json(400, { error: pinRes.reason });
+    if (!passRes.ok) return json(400, { error: passRes.reason });
 
-    const hashed = await hashPin(pinRes.pin);
+    const hashed = await hashPassword(passRes.password);
+
+    // Store hashed password in profile_secrets
     const { error: upErr } = await admin.from("profile_secrets").upsert({
       id: user_id,
       ...hashed,
@@ -56,11 +58,16 @@ serve(async (req) => {
     });
 
     if (upErr) {
-      return json(500, { error: "PIN update failed", details: upErr.message });
+      return json(500, { error: "Password update failed", details: upErr.message });
     }
 
-    // Best-effort: clear legacy pin_code
-    await admin.from("profiles").update({ pin_code: null as any }).eq("id", user_id);
+    // Keep Supabase Auth password in sync (best effort)
+    const { error: authErr } = await admin.auth.admin.updateUserById(user_id, {
+      password: passRes.password,
+    });
+    if (authErr) {
+      return json(500, { error: "Auth password update failed", details: authErr.message });
+    }
 
     return json(200, { success: true });
   } catch (e: any) {

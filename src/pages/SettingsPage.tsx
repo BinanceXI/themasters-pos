@@ -51,6 +51,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { usePOS } from "@/contexts/POSContext";
+import { hashPassword } from "@/lib/auth/passwordKdf";
+import { getLocalUser, renameLocalUser, upsertLocalUser } from "@/lib/auth/localUserStore";
 import { supabase } from "@/lib/supabase";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -198,14 +200,14 @@ export const SettingsPage = () => {
     username: "",
     password: "",
     role: "cashier",
-    pin_code: "",
     permissions: { ...DEFAULT_PERMS },
+    active: true,
   });
 
   // quick create + search
   const [staffSearch, setStaffSearch] = useState("");
   const [quickUsername, setQuickUsername] = useState("");
-  const [quickPin, setQuickPin] = useState("");
+  const [quickPassword, setQuickPassword] = useState("");
   const [quickRole, setQuickRole] = useState<"admin" | "cashier">("cashier");
   const [quickInventory, setQuickInventory] = useState(false);
   const [quickDiscount, setQuickDiscount] = useState(false);
@@ -217,12 +219,6 @@ export const SettingsPage = () => {
   const [myNewPassword, setMyNewPassword] = useState("");
   const [myNewPassword2, setMyNewPassword2] = useState("");
   const [savingMyCreds, setSavingMyCreds] = useState(false);
-    // ✅ Make sure Supabase auth session is loaded before allowing password changes
-  const [authReady, setAuthReady] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(() => setAuthReady(true));
-  }, []);
 
   /* ============================
      STORE SETTINGS (DB)
@@ -474,22 +470,11 @@ export const SettingsPage = () => {
 
         if (error) throw error;
 
-        // Optional: update PIN via Edge Function (hashed server-side)
-        const nextPin = String(data.pin_code || "").trim();
-        if (nextPin) {
-          const { data: pinData, error: pinErr } = await supabase.functions.invoke(
-            "set_staff_pin",
-            { body: { user_id: editingUser.id, pin: nextPin } }
-          );
-          if (pinErr) throw pinErr;
-          if ((pinData as any)?.error) throw new Error((pinData as any).error);
-        }
-
-        // optional password reset via Edge Function if you have it
+        // Optional: password reset via Edge Function (hashed server-side)
         const nextPassword = String(data.password || "").trim();
         if (nextPassword.length >= 6) {
           const { data: fnData, error: fnErr } = await supabase.functions.invoke(
-            "reset_staff_password",
+            "set_staff_password",
             { body: { user_id: editingUser.id, password: nextPassword } }
           );
           if (fnErr) throw fnErr;
@@ -503,13 +488,11 @@ export const SettingsPage = () => {
       const full_name = String(data.name || "").trim();
       const username = sanitizeUsername(data.username);
       const password = String(data.password || "");
-      const pin = String(data.pin_code || "").trim();
 
       if (!full_name) throw new Error("Full name required");
       if (!username) throw new Error("Username required");
       if (username.length < 3) throw new Error("Username must be 3+ characters");
       if (password.length < 6) throw new Error("Password must be at least 6 characters");
-      if (!pin) throw new Error("PIN required");
 
       const role = (data.role || "cashier") as "admin" | "cashier";
       const perms =
@@ -536,7 +519,6 @@ export const SettingsPage = () => {
             full_name,
             role,
             permissions: perms,
-            pin_code: pin,
           },
         }
       );
@@ -554,8 +536,8 @@ export const SettingsPage = () => {
         username: "",
         password: "",
         role: "cashier",
-        pin_code: "",
         permissions: { ...DEFAULT_PERMS },
+        active: true,
       });
     },
     onError: (err: any) => toast.error(err?.message || "User save failed"),
@@ -567,12 +549,10 @@ export const SettingsPage = () => {
       if (!navigator.onLine) throw new Error("You are offline");
 
       const username = sanitizeUsername(quickUsername);
-      const pin = String(quickPin || "").trim();
+      const password = String(quickPassword || "").trim() || `${username}123`;
       if (!username) throw new Error("Username required");
       if (username.length < 3) throw new Error("Username must be 3+ characters");
-      if (!pin) throw new Error("PIN required");
-
-      const password = `${username}123`;
+      if (password.length < 6) throw new Error("Password must be at least 6 characters");
       const full_name = username
         .replace(/[._-]/g, " ")
         .replace(/\b\w/g, (m) => m.toUpperCase());
@@ -609,7 +589,6 @@ export const SettingsPage = () => {
             full_name,
             role,
             permissions: perms,
-            pin_code: pin,
           },
         }
       );
@@ -617,16 +596,16 @@ export const SettingsPage = () => {
       if (fnErr) throw fnErr;
       if ((fnData as any)?.error) throw new Error((fnData as any).error);
 
-      return { username, password, pin };
+      return { username, password };
     },
     onSuccess: async (res) => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
       toast.success(`Created @${res.username}`);
       toast.message(`Default password: ${res.password}`, {
-        description: res.pin ? `PIN: ${res.pin}` : "No PIN set",
+        description: "Share this with the staff user, then ask them to change it.",
       });
       setQuickUsername("");
-      setQuickPin("");
+      setQuickPassword("");
       setQuickRole("cashier");
       setQuickInventory(false);
       setQuickDiscount(false);
@@ -653,29 +632,47 @@ export const SettingsPage = () => {
 
     setSavingMyCreds(true);
     try {
+      const prevUsername = sanitizeUsername((currentUser as any)?.username || "");
       const { error: profErr } = await supabase
         .from("profiles")
         .update({ username: nextUsername })
         .eq("id", currentUser.id);
       if (profErr) throw profErr;
 
-            if (myNewPassword) {
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (!sessionData?.session) {
-          throw new Error(
-            "Auth session missing. Please log out and log in again while online, then retry."
-          );
-        }
-
-        const { error: passErr } = await supabase.auth.updateUser({
-          password: myNewPassword,
-        });
-        if (passErr) throw passErr;
-
-        // ✅ Refresh tokens/session after changing password
-        const { error: refreshErr } = await supabase.auth.refreshSession();
-        if (refreshErr) throw refreshErr;
+      // Rename local offline user record if present (so password updates write to the right key)
+      if (prevUsername && prevUsername !== nextUsername) {
+        await renameLocalUser(prevUsername, nextUsername);
       }
+
+      if (myNewPassword) {
+        const { data: fnData, error: fnErr } = await supabase.functions.invoke("set_staff_password", {
+          body: { user_id: currentUser.id, password: myNewPassword },
+        });
+        if (fnErr) throw fnErr;
+        if ((fnData as any)?.error) throw new Error((fnData as any).error);
+
+        // Keep OFFLINE password login in sync for this device
+        const hashed = await hashPassword(myNewPassword);
+        const local = await getLocalUser(nextUsername);
+        await upsertLocalUser({
+          id: currentUser.id,
+          username: nextUsername,
+          full_name:
+            (local?.full_name as any) ??
+            (currentUser as any)?.full_name ??
+            (currentUser as any)?.name ??
+            null,
+          role: ((currentUser as any)?.role === "admin" ? "admin" : "cashier") as any,
+          permissions: (currentUser as any)?.permissions || {},
+          active: true,
+          password: hashed,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      // Keep local session in sync (username changes affect UI + login)
+      setCurrentUser({ ...(currentUser as any), username: nextUsername } as any);
+      localStorage.setItem("themasters_last_username", nextUsername);
 
       setMyNewPassword("");
       setMyNewPassword2("");
@@ -764,8 +761,7 @@ export const SettingsPage = () => {
       name: user.full_name || "",
       role: user.role || "cashier",
       permissions: { ...DEFAULT_PERMS, ...(user.permissions || {}) },
-      // Never read/store PINs from DB on the client. Admins can set a NEW PIN.
-      pin_code: "",
+      // Never read/store password hashes from DB on the client.
       username: user.username || "",
       password: "",
       active: user.active !== false,
@@ -780,7 +776,6 @@ export const SettingsPage = () => {
       username: "",
       password: "",
       role: "cashier",
-      pin_code: "",
       permissions: { ...DEFAULT_PERMS },
       active: true,
     });
@@ -1129,13 +1124,16 @@ export const SettingsPage = () => {
                           </div>
                         </Field>
 
-                        <Field label="PIN">
+                        <Field label="Password">
                           <Input
-                            value={quickPin}
-                            onChange={(e) => setQuickPin(e.target.value)}
-                            placeholder="1234"
-                            maxLength={8}
+                            type="password"
+                            value={quickPassword}
+                            onChange={(e) => setQuickPassword(e.target.value)}
+                            placeholder={`${sanitizeUsername(quickUsername) || "username"}123`}
                           />
+                          <div className="text-[11px] text-muted-foreground mt-1">
+                            Leave blank to use the default password shown.
+                          </div>
                         </Field>
 
                         <Field label="Role">
@@ -1150,7 +1148,7 @@ export const SettingsPage = () => {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="admin">Admin</SelectItem>
-                              <SelectItem value="cashier">Cashier</SelectItem>
+                              <SelectItem value="cashier">Staff</SelectItem>
                             </SelectContent>
                           </Select>
                         </Field>
@@ -1224,7 +1222,7 @@ export const SettingsPage = () => {
                       </div>
 
                       <div className="flex justify-end">
-                        <Button onClick={saveMyCredentials} disabled={savingMyCreds || !authReady}>
+                        <Button onClick={saveMyCredentials} disabled={savingMyCreds}>
   {savingMyCreds ? <Loader2 className="animate-spin" /> : "Save My Changes"}
 </Button>
                       </div>
@@ -1817,7 +1815,6 @@ export const SettingsPage = () => {
               username: "",
               password: "",
               role: "cashier",
-              pin_code: "",
               permissions: { ...DEFAULT_PERMS },
               active: true,
             });
@@ -1912,21 +1909,9 @@ export const SettingsPage = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="cashier">Cashier</SelectItem>
+                  <SelectItem value="cashier">Staff</SelectItem>
                 </SelectContent>
               </Select>
-            </Field>
-
-            <Field label={editingUser ? "New PIN (optional)" : "Login PIN"}>
-              <Input
-                type="password"
-                value={userForm.pin_code || ""}
-                onChange={(e) =>
-                  setUserForm({ ...userForm, pin_code: e.target.value })
-                }
-                placeholder="1234"
-                maxLength={8}
-              />
             </Field>
 
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/40 border border-border">

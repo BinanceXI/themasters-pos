@@ -7,6 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePOS } from "@/contexts/POSContext";
 import { supabase } from "@/lib/supabase";
+import {
+  callVerifyPassword,
+  seedLocalUserFromPassword,
+  verifyPasswordLocal,
+} from "@/lib/auth/offlinePasswordAuth";
 import { toast } from "sonner";
 import themastersLogo from "@/assets/themasters-logo.png";
 import { Capacitor } from "@capacitor/core";
@@ -18,47 +23,11 @@ const sanitizeUsername = (raw: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9._-]/g, "");
 
-type VerifyPinResponse =
-  | {
-      ok: true;
-      user: {
-        id: string;
-        username: string;
-        full_name: string | null;
-        role: string | null;
-        permissions: any;
-      };
-      token_hash: string;
-      type: "magiclink";
-    }
-  | { ok?: false; error?: string; details?: string };
-
-async function callVerifyPin(username: string, pin: string): Promise<VerifyPinResponse> {
-  const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
-  if (!url || !anonKey) return { ok: false, error: "Supabase env missing" };
-
-  const res = await fetch(`${url}/functions/v1/verify_pin`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ username, pin }),
-  });
-
-  const data = (await res.json().catch(() => ({}))) as any;
-  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}`, details: data?.details };
-  return data as VerifyPinResponse;
-}
-
 export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const { setCurrentUser, syncStatus } = usePOS();
 
   const [username, setUsername] = useState("");
-  const [secret, setSecret] = useState(""); // PIN or PASSWORD
+  const [secret, setSecret] = useState(""); // password
   const [showSecret, setShowSecret] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -70,7 +39,14 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
     usernameRef.current?.focus();
   }, []);
 
-  // ✅ Fingerprint unlock: requires an existing Supabase auth session
+  useEffect(() => {
+    try {
+      const last = localStorage.getItem("themasters_last_username");
+      if (last && !username) setUsername(last);
+    } catch {}
+  }, []);
+
+  // ✅ Fingerprint unlock: requires an existing Supabase auth session (online setup)
   const handleFingerprintLogin = async () => {
     if (!Capacitor.isNativePlatform()) {
       toast.error("Fingerprint works only on Android app");
@@ -93,13 +69,13 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData?.session?.access_token) {
-        toast.error("No active session. Please sign in with PIN.");
+        toast.error("No active session. Please sign in with your password.");
         return;
       }
 
       const { data: userData, error: userErr } = await supabase.auth.getUser();
       if (userErr || !userData?.user) {
-        toast.error("Session expired. Please sign in with PIN.");
+        toast.error("Session expired. Please sign in with your password.");
         return;
       }
 
@@ -143,23 +119,64 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 
     try {
       const u = sanitizeUsername(username);
-      const pin = String(secret || "").trim();
+      const password = String(secret || "");
 
-      if (!u || !pin) throw new Error("Enter username and PIN");
-      if (!navigator.onLine) throw new Error("Internet required for secure login");
+      if (!u || !password) throw new Error("Enter username and password");
 
-      // 1) Verify PIN server-side (no PINs downloaded to device)
-      const verify = await callVerifyPin(u, pin);
-      if (!("ok" in verify) || !verify.ok) {
-        throw new Error(verify?.error || "Invalid credentials");
+      // 1) OFFLINE-FIRST: try local password verification
+      const localUser = await verifyPasswordLocal(u, password);
+
+      if (localUser) {
+        setCurrentUser({
+          id: localUser.id,
+          full_name: localUser.full_name || localUser.username,
+          name: localUser.full_name || localUser.username,
+          username: localUser.username,
+          role: (localUser.role as any) || "cashier",
+          permissions: localUser.permissions || {},
+          active: true,
+        } as any);
+
+        sessionStorage.setItem("themasters_session_active", "1");
+        localStorage.setItem("themasters_last_username", localUser.username);
+
+        // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
+        if (navigator.onLine) {
+          try {
+            const verify = await callVerifyPassword(u, password);
+            if (verify.ok) {
+              const { error: otpErr } = await supabase.auth.verifyOtp({
+                token_hash: verify.token_hash,
+                type: "magiclink",
+              });
+              if (otpErr) throw otpErr;
+            }
+          } catch (e: any) {
+            toast.warning(e?.message || "Signed in offline; cloud session unavailable");
+          }
+        }
+
+        toast.success(`Welcome ${localUser.full_name || localUser.username}`);
+        onLogin();
+        return;
       }
 
-      // 2) Mint a real Supabase Auth session (gives us a real user JWT for edge functions + RLS)
+      // 2) No local user yet:
+      if (!navigator.onLine) {
+        throw new Error("Offline login not set up on this device. Connect once to sign in and enable offline access.");
+      }
+
+      // 3) Online verification (and seed offline password hash locally)
+      const verify = await callVerifyPassword(u, password);
+      if (!verify.ok) throw new Error(verify?.error || "Invalid credentials");
+
       const { error: otpErr } = await supabase.auth.verifyOtp({
         token_hash: verify.token_hash,
         type: "magiclink",
       });
       if (otpErr) throw otpErr;
+
+      await seedLocalUserFromPassword(verify.user, password);
 
       setCurrentUser({
         id: verify.user.id,
@@ -263,7 +280,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
             </div>
 
             <div className="space-y-2">
-              <Label>PIN</Label>
+              <Label>Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -271,10 +288,9 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
                   type={showSecret ? "text" : "password"}
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
-                  placeholder="••••"
+                  placeholder="••••••••"
                   className="pl-10 pr-10 h-12"
                   autoComplete="current-password"
-                  // ✅ FIX: stop “PIN keyboard” on mobile
                   inputMode="text"
                   enterKeyHint="done"
                 />
@@ -306,7 +322,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
             </Button>
 
             <div className="text-xs text-muted-foreground text-center">
-              Secure sign-in uses a server-side PIN check.
+              Offline-first sign-in uses your local password. If online, a cloud session is also created for syncing.
             </div>
           </form>
         </motion.div>

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { hashPin, validatePin } from "../_shared/pin.ts";
+import { hashPassword, validatePassword } from "../_shared/password.ts";
 import {
   getBearerToken,
   getSupabaseEnv,
@@ -58,20 +58,19 @@ serve(async (req) => {
     const permissions = body?.permissions && typeof body.permissions === "object" ? body.permissions : {};
 
     const password = String(body?.password || "");
-    const pinRes = validatePin(body?.pin_code);
+    const passRes = validatePassword(password);
 
     if (!username) return json(400, { error: "Username required" });
     if (username.length < 3) return json(400, { error: "Username must be 3+ characters" });
     if (!full_name) return json(400, { error: "Full name required" });
-    if (!password || password.length < 6) return json(400, { error: "Password must be at least 6 characters" });
-    if (!pinRes.ok) return json(400, { error: pinRes.reason });
+    if (!passRes.ok) return json(400, { error: passRes.reason });
 
     const email = `${username}@themasterspos.app`;
 
     // Create auth user
     const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
       email,
-      password,
+      password: passRes.password,
       email_confirm: true,
       user_metadata: { full_name },
     });
@@ -80,7 +79,7 @@ serve(async (req) => {
       return json(400, { error: createErr?.message ?? "User creation failed" });
     }
 
-    // Create profile (NO pin_code stored in profiles)
+    // Create profile (NO password secrets stored in profiles)
     const { error: profileErr } = await adminClient.from("profiles").insert({
       id: created.user.id,
       username,
@@ -94,18 +93,18 @@ serve(async (req) => {
       return json(400, { error: profileErr.message });
     }
 
-    // Store hashed PIN in profile_secrets
-    const pinHash = await hashPin(pinRes.pin);
-    const { error: pinErr } = await adminClient.from("profile_secrets").upsert({
+    // Store hashed PASSWORD in profile_secrets (offline-first login)
+    const passHash = await hashPassword(passRes.password);
+    const { error: passErr } = await adminClient.from("profile_secrets").upsert({
       id: created.user.id,
-      ...pinHash,
+      ...passHash,
       updated_at: new Date().toISOString(),
     });
 
-    if (pinErr) {
+    if (passErr) {
       return json(500, {
-        error: "PIN storage failed",
-        details: pinErr.message,
+        error: "Password storage failed",
+        details: passErr.message,
       });
     }
 

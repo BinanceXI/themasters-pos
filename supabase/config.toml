@@ -26,14 +26,14 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/delete_staff_user/index.ts"
 
-[functions.set_staff_pin]
+[functions.set_staff_password]
 enabled = true
 verify_jwt = true
-import_map = "./functions/set_staff_pin/deno.json"
-entrypoint = "./functions/set_staff_pin/index.ts"
+import_map = "./functions/set_staff_password/deno.json"
+entrypoint = "./functions/set_staff_password/index.ts"
 
-[functions.verify_pin]
+[functions.verify_password]
 enabled = true
 verify_jwt = false
-import_map = "./functions/verify_pin/deno.json"
-entrypoint = "./functions/verify_pin/index.ts"
+import_map = "./functions/verify_password/deno.json"
+entrypoint = "./functions/verify_password/index.ts"

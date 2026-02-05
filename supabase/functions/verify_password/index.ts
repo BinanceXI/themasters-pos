@@ -1,10 +1,8 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { hashPin, validatePin, verifyPin } from "../_shared/pin.ts";
-import {
-  getSupabaseEnv,
-  supabaseAdminClient,
-} from "../_shared/supabase.ts";
+import { hashPassword, validatePassword, verifyPassword } from "../_shared/password.ts";
+import { getSupabaseEnv, supabaseAdminClient } from "../_shared/supabase.ts";
 
 function sanitizeUsername(raw: string) {
   return String(raw || "")
@@ -23,9 +21,9 @@ type ProfileRow = {
 };
 
 type SecretRow = {
-  pin_salt: string;
-  pin_hash: string;
-  pin_iter: number;
+  password_salt: string | null;
+  password_hash: string | null;
+  password_iter: number | null;
 };
 
 serve(async (req) => {
@@ -37,10 +35,10 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({} as any));
     const username = sanitizeUsername(body?.username);
-    const pinRes = validatePin(body?.pin);
+    const passRes = validatePassword(body?.password);
 
     if (!username) return json(400, { error: "Username required" });
-    if (!pinRes.ok) return json(400, { error: pinRes.reason });
+    if (!passRes.ok) return json(400, { error: passRes.reason });
 
     const admin = supabaseAdminClient(env);
 
@@ -58,44 +56,51 @@ serve(async (req) => {
 
     let ok = false;
 
-    // Prefer hashed PINs in profile_secrets
+    // Prefer hashed passwords in profile_secrets
     const { data: secret, error: secErr } = await admin
       .from("profile_secrets")
-      .select("pin_salt, pin_hash, pin_iter")
+      .select("password_salt, password_hash, password_iter")
       .eq("id", p.id)
       .maybeSingle();
 
     if (secErr) {
       return json(500, {
-        error: "PIN store not configured",
+        error: "Password store not configured",
         details: secErr.message,
       });
     }
 
-    if (secret) {
-      ok = await verifyPin(pinRes.pin, secret as SecretRow);
+    const s = (secret as SecretRow | null) || null;
+    if (s?.password_salt && s?.password_hash && s?.password_iter) {
+      ok = await verifyPassword(passRes.password, {
+        password_salt: s.password_salt,
+        password_hash: s.password_hash,
+        password_iter: s.password_iter,
+      });
     } else {
-      // Legacy migration path: read plaintext pin_code (service role only), then upgrade to hash.
-      const { data: legacy, error: legacyErr } = await admin
-        .from("profiles")
-        .select("pin_code")
-        .eq("id", p.id)
-        .maybeSingle();
+      // Migration path: verify against Supabase Auth password (username-mapped email),
+      // then store a PBKDF2 hash in profile_secrets for offline-first login.
+      if (!env.anonKey) return json(401, { error: "Password not set yet. Ask an admin to set your password." });
 
-      if (legacyErr || !legacy?.pin_code) return json(401, { error: "Invalid credentials" });
-      if (String(legacy.pin_code) !== pinRes.pin) return json(401, { error: "Invalid credentials" });
+      const email = `${p.username}@themasterspos.app`;
+      const publicClient = createClient(env.url, env.anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+
+      const { data: signIn, error: signErr } = await publicClient.auth.signInWithPassword({
+        email,
+        password: passRes.password,
+      });
+      if (signErr || !signIn?.user) return json(401, { error: "Invalid credentials" });
 
       ok = true;
 
-      const hashed = await hashPin(pinRes.pin);
+      const hashed = await hashPassword(passRes.password);
       await admin.from("profile_secrets").upsert({
         id: p.id,
         ...hashed,
         updated_at: new Date().toISOString(),
       });
-
-      // Best-effort: clear legacy pin_code
-      await admin.from("profiles").update({ pin_code: null as any }).eq("id", p.id);
     }
 
     if (!ok) return json(401, { error: "Invalid credentials" });
@@ -122,6 +127,7 @@ serve(async (req) => {
         full_name: p.full_name,
         role: p.role,
         permissions: p.permissions || {},
+        active: p.active,
       },
       token_hash: link.properties.hashed_token,
       type: "magiclink",
@@ -130,3 +136,4 @@ serve(async (req) => {
     return json(500, { error: "Unhandled error", details: e?.message || String(e) });
   }
 });
+
