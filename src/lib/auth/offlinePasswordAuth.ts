@@ -23,7 +23,7 @@ export type VerifyPasswordResponse =
       token_hash: string;
       type: "magiclink";
     }
-  | { ok?: false; error?: string; details?: string };
+  | { ok: false; error?: string; details?: string };
 
 export async function verifyPasswordLocal(username: string, password: string): Promise<LocalAuthUser | null> {
   const u = sanitizeUsername(username);
@@ -79,4 +79,3 @@ export async function callVerifyPassword(username: string, password: string): Pr
   if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}`, details: data?.details };
   return data as VerifyPasswordResponse;
 }
-
