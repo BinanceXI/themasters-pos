@@ -27,7 +27,7 @@ type SecretRow = {
 };
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
 
   try {
@@ -136,4 +136,3 @@ serve(async (req) => {
     return json(500, { error: "Unhandled error", details: e?.message || String(e) });
   }
 });
-

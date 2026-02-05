@@ -143,13 +143,19 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
         if (navigator.onLine) {
           try {
-            const verify = await callVerifyPassword(u, password);
-            if (verify.ok) {
-              const { error: otpErr } = await supabase.auth.verifyOtp({
-                token_hash: verify.token_hash,
-                type: "magiclink",
-              });
-              if (otpErr) throw otpErr;
+            const email = `${u}@themasterspos.app`;
+            const { error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+
+            // Best-effort fallback: edge-function magiclink token (older/migrated accounts)
+            if (signErr) {
+              const verify = await callVerifyPassword(u, password);
+              if (verify.ok) {
+                const { error: otpErr } = await supabase.auth.verifyOtp({
+                  token_hash: verify.token_hash,
+                  type: "magiclink",
+                });
+                if (otpErr) throw otpErr;
+              }
             }
           } catch (e: any) {
             toast.warning(e?.message || "Signed in offline; cloud session unavailable");
@@ -166,9 +172,53 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         throw new Error("Offline login not set up on this device. Connect once to sign in and enable offline access.");
       }
 
-      // 3) Online verification (and seed offline password hash locally)
+      // 3) Online sign-in (seed offline password hash locally)
+      // Prefer standard password sign-in to avoid any edge-function dependency for basic login.
+      const email = `${u}@themasterspos.app`;
+      try {
+        const { data: signIn, error: signErr } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signErr) throw signErr;
+        if (!signIn?.user?.id) throw new Error("Sign-in failed");
+
+        const { data: profile, error: profErr } = await supabase
+          .from("profiles")
+          .select("id, username, full_name, role, permissions, active")
+          .eq("id", signIn.user.id)
+          .maybeSingle();
+
+        if (profErr || !profile) throw new Error("Failed to load profile");
+        if ((profile as any)?.active === false) throw new Error("Account disabled");
+
+        await seedLocalUserFromPassword(profile as any, password);
+
+        setCurrentUser({
+          id: String((profile as any).id),
+          full_name: (profile as any).full_name || (profile as any).username,
+          name: (profile as any).full_name || (profile as any).username,
+          username: (profile as any).username,
+          role: (profile as any).role || "cashier",
+          permissions: (profile as any).permissions || {},
+          active: true,
+        } as any);
+
+        sessionStorage.setItem("themasters_session_active", "1");
+        localStorage.setItem("themasters_last_username", String((profile as any).username || u));
+
+        toast.success(`Welcome ${(profile as any).full_name || (profile as any).username || u}`);
+        onLogin();
+        return;
+      } catch {
+        // Fall back to edge-function flow (magiclink token) for older/migrated accounts.
+      }
+
       const verify = await callVerifyPassword(u, password);
-      if (!verify.ok) throw new Error(verify.error || "Invalid credentials");
+      if (!verify.ok) {
+        throw new Error(verify.error || "Invalid credentials");
+      }
 
       const { error: otpErr } = await supabase.auth.verifyOtp({
         token_hash: verify.token_hash,
