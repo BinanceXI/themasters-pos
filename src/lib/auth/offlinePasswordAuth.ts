@@ -65,9 +65,12 @@ export async function callVerifyPassword(username: string, password: string): Pr
 
   if (!url || !anonKey) return { ok: false, error: "Supabase env missing" };
 
+  // In DEV, call via Vite proxy to avoid browser CORS preflight issues.
+  const endpoint = import.meta.env.DEV ? "/functions/v1/verify_password" : `${url}/functions/v1/verify_password`;
+
   let res: Response;
   try {
-    res = await fetch(`${url}/functions/v1/verify_password`, {
+    res = await fetch(endpoint, {
       method: "POST",
       headers: {
         apikey: anonKey,

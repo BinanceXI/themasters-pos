@@ -5,17 +5,20 @@ import { Lock, ShieldCheck, Wifi, WifiOff, Eye, EyeOff, User } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { usePOS } from "@/contexts/POSContext";
+import { ADMIN_PERMISSIONS, usePOS } from "@/contexts/POSContext";
 import { supabase } from "@/lib/supabase";
 import {
   callVerifyPassword,
   seedLocalUserFromPassword,
   verifyPasswordLocal,
 } from "@/lib/auth/offlinePasswordAuth";
+import { hashPassword } from "@/lib/auth/passwordKdf";
+import { listLocalUsers, upsertLocalUser } from "@/lib/auth/localUserStore";
 import { toast } from "sonner";
 import themastersLogo from "@/assets/themasters-logo.png";
 import { Capacitor } from "@capacitor/core";
 import { NativeBiometric } from "@capgo/capacitor-native-biometric";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const sanitizeUsername = (raw: string) =>
   (raw || "")
@@ -32,6 +35,16 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const [localUserCount, setLocalUserCount] = useState<number>(0);
+
+  const [showOfflineSetup, setShowOfflineSetup] = useState(false);
+  const [setupFullName, setSetupFullName] = useState("");
+  const [setupUsername, setSetupUsername] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupPassword2, setSetupPassword2] = useState("");
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [setupError, setSetupError] = useState("");
+
   const usernameRef = useRef<HTMLInputElement>(null);
   const secretRef = useRef<HTMLInputElement>(null);
 
@@ -40,10 +53,21 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   }, []);
 
   useEffect(() => {
-    try {
-      const last = localStorage.getItem("themasters_last_username");
-      if (last && !username) setUsername(last);
-    } catch {}
+    (async () => {
+      try {
+        const users = await listLocalUsers();
+        setLocalUserCount(users.length);
+      } catch {
+        setLocalUserCount(0);
+      }
+
+      try {
+        const last = localStorage.getItem("themasters_last_username");
+        if (last) setUsername((u) => (u ? u : last));
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
 
   // ✅ Fingerprint unlock: requires an existing Supabase auth session (online setup)
@@ -156,7 +180,8 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
                 });
                 if (otpErr) throw otpErr;
               } else {
-                throw new Error(verify.error || signErr.message || "Cloud session unavailable");
+                const msg = "error" in verify ? String(verify.error || "") : "";
+                throw new Error(msg || signErr.message || "Cloud session unavailable");
               }
             }
           } catch (e: any) {
@@ -171,79 +196,80 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 
       // 2) No local user yet:
       if (!navigator.onLine) {
+        if (localUserCount === 0) {
+          throw new Error("No offline users found. Tap “Set up Offline Admin” to start without internet.");
+        }
         throw new Error("Offline login not set up on this device. Connect once to sign in and enable offline access.");
       }
 
       // 3) Online sign-in (seed offline password hash locally)
-      // Prefer standard password sign-in to avoid any edge-function dependency for basic login.
-      const email = `${u}@themasterspos.app`;
-      try {
-        const { data: signIn, error: signErr } = await supabase.auth.signInWithPassword({
-          email,
-          password,
+      // Prefer edge-function username/password verification (no email required).
+      const verify = await callVerifyPassword(u, password);
+      if (verify.ok) {
+        const { error: otpErr } = await supabase.auth.verifyOtp({
+          token_hash: verify.token_hash,
+          type: "magiclink",
         });
+        if (otpErr) throw otpErr;
 
-        if (signErr) throw signErr;
-        if (!signIn?.user?.id) throw new Error("Sign-in failed");
-
-        const { data: profile, error: profErr } = await supabase
-          .from("profiles")
-          .select("id, username, full_name, role, permissions, active")
-          .eq("id", signIn.user.id)
-          .maybeSingle();
-
-        if (profErr || !profile) throw new Error("Failed to load profile");
-        if ((profile as any)?.active === false) throw new Error("Account disabled");
-
-        await seedLocalUserFromPassword(profile as any, password);
+        await seedLocalUserFromPassword(verify.user, password);
 
         setCurrentUser({
-          id: String((profile as any).id),
-          full_name: (profile as any).full_name || (profile as any).username,
-          name: (profile as any).full_name || (profile as any).username,
-          username: (profile as any).username,
-          role: (profile as any).role || "cashier",
-          permissions: (profile as any).permissions || {},
+          id: verify.user.id,
+          full_name: verify.user.full_name || verify.user.username,
+          name: verify.user.full_name || verify.user.username,
+          username: verify.user.username,
+          role: (verify.user.role as any) || "cashier",
+          permissions: verify.user.permissions || {},
           active: true,
         } as any);
 
         sessionStorage.setItem("themasters_session_active", "1");
-        localStorage.setItem("themasters_last_username", String((profile as any).username || u));
+        localStorage.setItem("themasters_last_username", verify.user.username);
 
-        toast.success(`Welcome ${(profile as any).full_name || (profile as any).username || u}`);
+        toast.success(`Welcome ${verify.user.full_name || verify.user.username}`);
         onLogin();
         return;
-      } catch {
-        // Fall back to edge-function flow (magiclink token) for older/migrated accounts.
       }
 
-      const verify = await callVerifyPassword(u, password);
-      if (!verify.ok) {
-        throw new Error(verify.error || "Invalid credentials");
+      // Fallback: direct Supabase Auth password sign-in (for accounts that already exist in Auth).
+      const email = u.includes("@") ? u : `${u}@themasterspos.app`;
+      const { data: signIn, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+
+      if (signErr || !signIn?.user?.id) {
+        const msg = "error" in verify ? String(verify.error || "") : "";
+        const merged = msg || signErr?.message || "Invalid credentials";
+        if (/cors|preflight|failed to fetch|err_failed/i.test(merged) && localUserCount === 0) {
+          throw new Error("Cannot reach server to verify credentials. Tap “Set up Offline Admin” to start offline.");
+        }
+        throw new Error(merged);
       }
 
-      const { error: otpErr } = await supabase.auth.verifyOtp({
-        token_hash: verify.token_hash,
-        type: "magiclink",
-      });
-      if (otpErr) throw otpErr;
+      const { data: profile, error: profErr } = await supabase
+        .from("profiles")
+        .select("id, username, full_name, role, permissions, active")
+        .eq("id", signIn.user.id)
+        .maybeSingle();
 
-      await seedLocalUserFromPassword(verify.user, password);
+      if (profErr || !profile) throw new Error("Failed to load profile");
+      if ((profile as any)?.active === false) throw new Error("Account disabled");
+
+      await seedLocalUserFromPassword(profile as any, password);
 
       setCurrentUser({
-        id: verify.user.id,
-        full_name: verify.user.full_name || verify.user.username,
-        name: verify.user.full_name || verify.user.username,
-        username: verify.user.username,
-        role: (verify.user.role as any) || "cashier",
-        permissions: verify.user.permissions || {},
+        id: String((profile as any).id),
+        full_name: (profile as any).full_name || (profile as any).username,
+        name: (profile as any).full_name || (profile as any).username,
+        username: (profile as any).username,
+        role: (profile as any).role || "cashier",
+        permissions: (profile as any).permissions || {},
         active: true,
       } as any);
 
       sessionStorage.setItem("themasters_session_active", "1");
-      localStorage.setItem("themasters_last_username", verify.user.username);
+      localStorage.setItem("themasters_last_username", String((profile as any).username || u));
 
-      toast.success(`Welcome ${verify.user.full_name || verify.user.username}`);
+      toast.success(`Welcome ${(profile as any).full_name || (profile as any).username || u}`);
       onLogin();
     } catch (err: any) {
       setError(err?.message || "Login failed");
@@ -252,6 +278,70 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       secretRef.current?.focus();
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOfflineAdminSetup = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setSetupError("");
+    setSetupLoading(true);
+    try {
+      const existing = await listLocalUsers();
+      if (existing.length > 0) throw new Error("Offline users already exist on this device. Use normal login.");
+
+      const fullName = String(setupFullName || "").trim();
+      const u = sanitizeUsername(setupUsername);
+      const p1 = String(setupPassword || "");
+      const p2 = String(setupPassword2 || "");
+
+      if (!fullName) throw new Error("Full name required");
+      if (!u) throw new Error("Username required");
+      if (u.length < 3) throw new Error("Username must be 3+ characters");
+      if (p1.length < 6) throw new Error("Password must be at least 6 characters");
+      if (p1 !== p2) throw new Error("Passwords do not match");
+
+      const id =
+        (globalThis.crypto as any)?.randomUUID?.() ?? `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const hashed = await hashPassword(p1);
+
+      await upsertLocalUser({
+        id,
+        username: u,
+        full_name: fullName,
+        role: "admin",
+        permissions: ADMIN_PERMISSIONS,
+        active: true,
+        password: hashed,
+        updated_at: new Date().toISOString(),
+      });
+
+      setLocalUserCount(1);
+      setShowOfflineSetup(false);
+      setSetupFullName("");
+      setSetupUsername("");
+      setSetupPassword("");
+      setSetupPassword2("");
+
+      setCurrentUser({
+        id,
+        full_name: fullName,
+        name: fullName,
+        username: u,
+        role: "admin",
+        permissions: ADMIN_PERMISSIONS,
+        active: true,
+      } as any);
+
+      sessionStorage.setItem("themasters_session_active", "1");
+      localStorage.setItem("themasters_last_username", u);
+      toast.success(`Welcome ${fullName}`);
+      onLogin();
+    } catch (err: any) {
+      const msg = err?.message || "Setup failed";
+      setSetupError(msg);
+      toast.error(msg);
+    } finally {
+      setSetupLoading(false);
     }
   };
 
@@ -376,9 +466,95 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
             <div className="text-xs text-muted-foreground text-center">
               Offline-first sign-in uses your local password. If online, a cloud session is also created for syncing.
             </div>
+
+            {localUserCount === 0 && (
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full h-12"
+                  onClick={() => setShowOfflineSetup(true)}
+                >
+                  Set up Offline Admin
+                </Button>
+                <div className="text-[11px] text-muted-foreground text-center mt-2">
+                  First time on this device? Create a local admin and use the app completely offline.
+                </div>
+              </div>
+            )}
           </form>
         </motion.div>
       </div>
+
+      <Dialog open={showOfflineSetup} onOpenChange={setShowOfflineSetup}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Offline Admin Setup</DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleOfflineAdminSetup} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Full name</Label>
+              <Input
+                value={setupFullName}
+                onChange={(e) => setSetupFullName(e.target.value)}
+                placeholder="Owner / Admin"
+                autoCapitalize="words"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Username</Label>
+              <Input
+                value={setupUsername}
+                onChange={(e) => setSetupUsername(e.target.value)}
+                placeholder="admin"
+                autoCapitalize="none"
+                autoCorrect="off"
+              />
+              <div className="text-[11px] text-muted-foreground">Lowercase letters/numbers only; 3+ characters.</div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Password</Label>
+              <Input
+                type="password"
+                value={setupPassword}
+                onChange={(e) => setSetupPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <div className="text-[11px] text-muted-foreground">Minimum 6 characters.</div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Confirm password</Label>
+              <Input
+                type="password"
+                value={setupPassword2}
+                onChange={(e) => setSetupPassword2(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+            </div>
+
+            {setupError && (
+              <div className="text-sm text-red-500 bg-red-500/10 border border-red-500/20 p-3 rounded-md text-center">
+                {setupError}
+              </div>
+            )}
+
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setShowOfflineSetup(false)} disabled={setupLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={setupLoading}>
+                {setupLoading ? "Creating…" : "Create Offline Admin"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

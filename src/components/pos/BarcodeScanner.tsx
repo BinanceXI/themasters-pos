@@ -215,7 +215,7 @@ export const BarcodeScanner = ({ isOpen, onClose, onScan }: BarcodeScannerProps)
       restart();
       return;
     }
-    const info = explainCameraError(res.error);
+    const info = explainCameraError("error" in res ? res.error : null);
     setGate({ state: info.state, title: info.title, message: info.message });
   }, [restart]);
 
