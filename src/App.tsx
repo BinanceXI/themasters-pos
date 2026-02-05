@@ -21,6 +21,7 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { ReceiptsPage } from "./pages/ReceiptsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ProfitAnalysisPage } from "./pages/ProfitAnalysisPage";
+import { ExpensesPage } from "./pages/ExpensesPage";
 import NotFound from "./pages/NotFound";
 
 const SESSION_KEY = "themasters_session_active";
@@ -125,6 +126,14 @@ const AppRoutes = () => {
             element={
               <MainLayout>
                 <ReportsPage />
+              </MainLayout>
+            }
+          />
+          <Route
+            path="/expenses"
+            element={
+              <MainLayout>
+                <ExpensesPage />
               </MainLayout>
             }
           />

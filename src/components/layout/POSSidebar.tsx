@@ -9,6 +9,7 @@ import {
   BarChart3,
   Settings,
   Printer,
+  Wallet,
   ChevronLeft,
   ChevronRight,
   PieChart,
@@ -22,6 +23,7 @@ const navItems = [
   { path: "/inventory", label: "Inventory", icon: Package },
   { path: "/profit", label: "Profit Analysis", icon: PieChart },
   { path: "/receipts", label: "Receipts", icon: Printer },
+  { path: "/expenses", label: "Expenses", icon: Wallet },
   { path: "/reports", label: "Reports", icon: BarChart3 },
   { path: "/settings", label: "Settings", icon: Settings },
 ];

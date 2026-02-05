@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { 
   startOfDay, endOfDay, subDays, startOfMonth, startOfYear, 
-  format, parseISO, isWithinInterval 
+  endOfMonth, format, parseISO, isWithinInterval 
 } from 'date-fns';
 import { motion } from 'framer-motion';
 import {
@@ -21,6 +21,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar 
 } from 'recharts';
 import { cn } from '@/lib/utils';
+import { listExpenses } from '@/lib/expenses';
 
 export const ReportsPage = () => {
   const [rangeType, setRangeType] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('today');
@@ -28,6 +29,57 @@ export const ReportsPage = () => {
     from: new Date(),
     to: new Date(),
   });
+
+  // --- P4 Widget: This month (Revenue vs Expenses) ---
+  const monthRange = useMemo(() => {
+    const now = new Date();
+    return {
+      from: startOfMonth(now).toISOString(),
+      to: endOfMonth(now).toISOString(),
+    };
+  }, []);
+
+  const { data: monthOrders = [] } = useQuery({
+    queryKey: ['p4MonthRevenue', monthRange.from, monthRange.to],
+    enabled: navigator.onLine,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('total_amount, created_at')
+        .gte('created_at', monthRange.from)
+        .lte('created_at', monthRange.to);
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
+  });
+
+  const monthRevenue = useMemo(
+    () => (monthOrders || []).reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0),
+    [monthOrders]
+  );
+
+  const { data: monthExpenses = [] } = useQuery({
+    queryKey: ['p4MonthExpenses', monthRange.from, monthRange.to],
+    queryFn: async () => listExpenses(monthRange),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+
+  const monthExpenseTotals = useMemo(() => {
+    let expenses = 0;
+    let drawings = 0;
+    (monthExpenses || []).forEach((e: any) => {
+      const amt = Number(e.amount || 0);
+      if (e.expense_type === 'owner_drawing') drawings += amt;
+      else expenses += amt;
+    });
+    const net = monthRevenue - (expenses + drawings);
+    return { expenses, drawings, net };
+  }, [monthExpenses, monthRevenue]);
 
   // --- 1. FETCH REAL DATA ---
   const { data: salesData = [], isLoading } = useQuery({
@@ -224,6 +276,35 @@ export const ReportsPage = () => {
           </Button>
         </div>
       </div>
+
+      {/* P4: This month widget */}
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">This month (Revenue vs Expenses)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-xl border bg-card p-3">
+              <div className="text-xs text-muted-foreground">Revenue</div>
+              <div className="text-lg font-bold">${monthRevenue.toFixed(2)}</div>
+            </div>
+            <div className="rounded-xl border bg-card p-3">
+              <div className="text-xs text-muted-foreground">Expenses</div>
+              <div className="text-lg font-bold">${monthExpenseTotals.expenses.toFixed(2)}</div>
+            </div>
+            <div className="rounded-xl border bg-card p-3">
+              <div className="text-xs text-muted-foreground">Owner drawings</div>
+              <div className="text-lg font-bold">${monthExpenseTotals.drawings.toFixed(2)}</div>
+            </div>
+            <div className="rounded-xl border bg-card p-3">
+              <div className="text-xs text-muted-foreground">Net</div>
+              <div className={cn("text-lg font-bold", monthExpenseTotals.net >= 0 ? "text-emerald-500" : "text-red-500")}>
+                ${monthExpenseTotals.net.toFixed(2)}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* KPI STATS */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">

@@ -6,6 +6,7 @@ import {
   Package,
   BarChart3,
   Settings,
+  Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { usePOS } from '@/contexts/POSContext';
@@ -14,6 +15,7 @@ const navItems = [
   { path: '/dashboard', label: 'Home', icon: LayoutDashboard },
   { path: '/pos', label: 'POS', icon: ShoppingCart },
   { path: '/inventory', label: 'Stock', icon: Package },
+  { path: '/expenses', label: 'Expenses', icon: Wallet },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
@@ -25,6 +27,7 @@ export const MobileBottomNav = () => {
   // Filter nav items based on user permissions
   const filteredNavItems = navItems.filter(item => {
     if (!currentUser?.permissions) return true;
+    if (item.path === '/expenses' && currentUser.role !== 'admin') return false;
     if (item.path === '/reports' && !currentUser.permissions.allowReports) return false;
     if (item.path === '/inventory' && !currentUser.permissions.allowInventory) return false;
     if (item.path === '/settings' && !currentUser.permissions.allowSettings) return false;
