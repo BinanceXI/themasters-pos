@@ -155,6 +155,8 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
                   type: "magiclink",
                 });
                 if (otpErr) throw otpErr;
+              } else {
+                throw new Error(verify.error || signErr.message || "Cloud session unavailable");
               }
             }
           } catch (e: any) {
