@@ -74,9 +74,8 @@ const settingsSections = [
   { id: "users", label: "User Management", icon: UserIcon, shortcut: "2" },
   { id: "currency", label: "Currency & Tax", icon: DollarSign, shortcut: "3" },
   { id: "appearance", label: "Appearance", icon: Palette, shortcut: "4" },
-  { id: "security", label: "Security", icon: Shield, shortcut: "5" },
-  { id: "backup", label: "Backup & Export", icon: Database, shortcut: "6" },
-  { id: "notifications", label: "Notifications", icon: Bell, shortcut: "7" },
+  // Security overrides/notifications are not yet enforced in the app; keep Settings clean.
+  { id: "backup", label: "Backup & Export", icon: Database, shortcut: "5" },
 ];
 
 /* ============================
@@ -181,6 +180,7 @@ export const SettingsPage = () => {
   const canAccessSettings =
     isAdmin || !!(currentUser as any)?.permissions?.allowSettings;
 
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [activeSection, setActiveSection] = useState("business");
   const [isDark, setIsDark] = useState(() =>
     document.documentElement.classList.contains("dark")
@@ -227,13 +227,6 @@ export const SettingsPage = () => {
   const { data: settings, isFetching: settingsLoading } = useQuery({
     queryKey: ["storeSettings"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("store_settings")
-        .select("*")
-        .maybeSingle();
-
-      if (error && (error as any).code !== "PGRST116") throw error;
-
       const defaults: StoreSettings = {
         business_name: "TheMasters",
         currency: localStorage.getItem(CURRENCY_KEY) || "USD",
@@ -242,15 +235,18 @@ export const SettingsPage = () => {
         show_qr_code: true,
         qr_code_data: window.location.origin,
 
-        require_manager_void: true,
-        require_manager_refund: true,
-        auto_logout_minutes: 15,
-
-        low_stock_alerts: true,
-        daily_sales_summary: true,
-        sound_effects: true,
         low_stock_threshold: num(localStorage.getItem(LOW_STOCK_THRESHOLD_KEY), 3),
       };
+
+      // Offline-first: avoid network calls when offline; use local defaults.
+      if (!isOnline) {
+        syncSettingsToLocalStorage(defaults);
+        return defaults;
+      }
+
+      const { data, error } = await supabase.from("store_settings").select("*").maybeSingle();
+
+      if (error && (error as any).code !== "PGRST116") throw error;
 
       const merged = { ...defaults, ...(data || {}) } as StoreSettings;
 
@@ -270,7 +266,6 @@ export const SettingsPage = () => {
   const saveSettingsMutation = useMutation({
     mutationFn: async (newSettings: StoreSettings) => {
       if (!isAdmin) throw new Error("Admins only");
-      if (!navigator.onLine) throw new Error("You are offline. Connect to save.");
 
       const payload: StoreSettings = {
         id: settings?.id,
@@ -278,20 +273,23 @@ export const SettingsPage = () => {
         currency: String(newSettings.currency || "USD"),
         tax_rate: normalizeTaxRate(newSettings.tax_rate ?? 0),
         tax_included: !!newSettings.tax_included,
-        auto_logout_minutes: Math.max(0, num(newSettings.auto_logout_minutes ?? 0, 0)),
         low_stock_threshold: Math.max(0, num(newSettings.low_stock_threshold ?? 0, 0)),
         updated_at: new Date().toISOString() as any,
       };
 
-      const { error } = await supabase.from("store_settings").upsert(payload);
-      if (error) throw error;
-
       // sync instantly for POS UI
       syncSettingsToLocalStorage(payload);
+
+      // Offline-first: local settings still apply; cloud sync requires internet.
+      if (!isOnline) return { savedOffline: true as const };
+
+      const { error } = await supabase.from("store_settings").upsert(payload);
+      if (error) throw error;
+      return { savedOffline: false as const };
     },
-    onSuccess: async () => {
+    onSuccess: async (res) => {
       await queryClient.invalidateQueries({ queryKey: ["storeSettings"] });
-      toast.success("Settings saved");
+      toast.success(res?.savedOffline ? "Saved locally (offline)" : "Settings saved");
     },
     onError: (err: any) => toast.error(err?.message || "Save failed"),
   });
@@ -311,7 +309,7 @@ export const SettingsPage = () => {
       if (error) throw error;
       return data || [];
     },
-    enabled: isAdmin,
+    enabled: isAdmin && isOnline,
     staleTime: 1000 * 10,
     refetchOnWindowFocus: false,
   });
@@ -330,6 +328,7 @@ export const SettingsPage = () => {
   useEffect(() => {
     const loadMe = async () => {
       if (!currentUser?.id) return;
+      if (!isOnline) return;
       const { data } = await supabase
         .from("profiles")
         .select("username")
@@ -338,7 +337,7 @@ export const SettingsPage = () => {
       if (data?.username) setMyUsername(String(data.username));
     };
     loadMe();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, isOnline]);
 
   /* ============================
      DELETE / DEACTIVATE USER
@@ -349,7 +348,7 @@ export const SettingsPage = () => {
   const deactivateUserMutation = useMutation({
     mutationFn: async (user: any) => {
       if (!isAdmin) throw new Error("Admins only");
-      if (!navigator.onLine) throw new Error("You are offline");
+      if (!isOnline) throw new Error("You are offline");
 
       if (isSelf(currentUser?.id, user.id)) {
         throw new Error("You cannot deactivate your own account");
@@ -372,7 +371,7 @@ export const SettingsPage = () => {
   const activateUserMutation = useMutation({
     mutationFn: async (user: any) => {
       if (!isAdmin) throw new Error("Admins only");
-      if (!navigator.onLine) throw new Error("You are offline");
+      if (!isOnline) throw new Error("You are offline");
 
       if (isSelf(currentUser?.id, user.id)) {
         throw new Error("You cannot activate your own account");
@@ -395,7 +394,7 @@ export const SettingsPage = () => {
   const deleteUserMutation = useMutation({
     mutationFn: async (user: any) => {
       if (!isAdmin) throw new Error("Admins only");
-      if (!navigator.onLine) throw new Error("You are offline");
+      if (!isOnline) throw new Error("You are offline");
 
       if (isSelf(currentUser?.id, user.id)) {
         throw new Error("You cannot delete your own account");
@@ -426,7 +425,7 @@ export const SettingsPage = () => {
   const saveUserMutation = useMutation({
     mutationFn: async (data: any) => {
       if (!isAdmin) throw new Error("Admins only");
-      if (!navigator.onLine) throw new Error("You are offline. Connect to manage users.");
+      if (!isOnline) throw new Error("You are offline. Connect to manage users.");
 
       const permissions: UserPermissions = {
         ...DEFAULT_PERMS,
@@ -546,7 +545,7 @@ export const SettingsPage = () => {
   const quickCreateMutation = useMutation({
     mutationFn: async () => {
       if (!isAdmin) throw new Error("Admins only");
-      if (!navigator.onLine) throw new Error("You are offline");
+      if (!isOnline) throw new Error("You are offline");
 
       const username = sanitizeUsername(quickUsername);
       const password = String(quickPassword || "").trim() || `${username}123`;
@@ -620,7 +619,7 @@ export const SettingsPage = () => {
   ============================ */
   const saveMyCredentials = async () => {
     if (!isAdmin || !currentUser?.id) return toast.error("Admins only");
-    if (!navigator.onLine) return toast.error("You are offline");
+    if (!isOnline) return toast.error("You are offline");
 
     const nextUsername = sanitizeUsername(myUsername);
     if (nextUsername.length < 3) return toast.error("Username must be 3+ characters");
@@ -692,7 +691,7 @@ export const SettingsPage = () => {
     const tag = (document.activeElement?.tagName || "").toUpperCase();
     if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-    if (e.key >= "1" && e.key <= "7") {
+    if (e.key >= "1" && e.key <= "9") {
       const index = parseInt(e.key, 10) - 1;
       const sec = settingsSections[index];
       if (sec) setActiveSection(sec.id);
@@ -704,6 +703,17 @@ export const SettingsPage = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
+  useEffect(() => {
+    const onOn = () => setIsOnline(true);
+    const onOff = () => setIsOnline(false);
+    window.addEventListener("online", onOn);
+    window.addEventListener("offline", onOff);
+    return () => {
+      window.removeEventListener("online", onOn);
+      window.removeEventListener("offline", onOff);
+    };
+  }, []);
+
   const toggleTheme = () => {
     setIsDark((v) => !v);
     document.documentElement.classList.toggle("dark");
@@ -714,6 +724,7 @@ export const SettingsPage = () => {
   ============================ */
   const handleExportData = async () => {
     if (!isAdmin) return toast.error("Admins only");
+    if (!isOnline) return toast.error("You are offline. Connect to export a backup.");
 
       toast.loading("Generating backup...");
       try {
@@ -1168,19 +1179,24 @@ export const SettingsPage = () => {
                           <Shield className="w-4 h-4" />
                           Fast create for real-world POS use.
                         </div>
-                        <Button
-                          className="gap-2"
-                          onClick={() => quickCreateMutation.mutate()}
-                          disabled={quickCreateMutation.isPending}
-                        >
+	                        <Button
+	                          className="gap-2"
+	                          onClick={() => quickCreateMutation.mutate()}
+	                          disabled={quickCreateMutation.isPending || !isOnline}
+	                        >
                           {quickCreateMutation.isPending ? (
                             <Loader2 className="animate-spin" />
                           ) : (
                             <UserPlus className="w-4 h-4" />
                           )}
-                          Create Staff
-                        </Button>
-                      </div>
+	                          Create Staff
+	                        </Button>
+	                        {!isOnline && (
+	                          <div className="text-xs text-muted-foreground">
+	                            Offline: connect to create staff.
+	                          </div>
+	                        )}
+	                      </div>
                     </CardContent>
                   </Card>
 
@@ -1242,9 +1258,9 @@ export const SettingsPage = () => {
                             onChange={(e) => setStaffSearch(e.target.value)}
                           />
                         </div>
-                        <Button size="sm" className="gap-2" onClick={handleAddUser}>
-                          <UserPlus className="w-4 h-4" /> Add
-                        </Button>
+	                        <Button size="sm" className="gap-2" onClick={handleAddUser} disabled={!isOnline}>
+	                          <UserPlus className="w-4 h-4" /> Add
+	                        </Button>
                       </div>
                     </CardHeader>
 
@@ -1557,107 +1573,6 @@ export const SettingsPage = () => {
             </motion.div>
           )}
 
-          {/* SECURITY */}
-          {activeSection === "security" && (
-            <motion.div
-              key="security"
-              initial={{ opacity: 0, x: 12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0 }}
-              className="space-y-4"
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle>Security</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="font-medium">
-                        Require Manager Override for Voids
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Admin approval required to void sales.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={!!formData.require_manager_void}
-                      onCheckedChange={(c) =>
-                        setFormData({
-                          ...formData,
-                          require_manager_void: c,
-                        })
-                      }
-                      disabled={!isAdmin}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="font-medium">
-                        Require Manager Override for Refunds
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Admin approval required for refunds.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={!!formData.require_manager_refund}
-                      onCheckedChange={(c) =>
-                        setFormData({
-                          ...formData,
-                          require_manager_refund: c,
-                        })
-                      }
-                      disabled={!isAdmin}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                    <Field label="Auto Logout (minutes)">
-                      <Input
-                        type="number"
-                        value={String(formData.auto_logout_minutes ?? 15)}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            auto_logout_minutes: Math.max(
-                              0,
-                              num(e.target.value, 15)
-                            ),
-                          })
-                        }
-                        disabled={!isAdmin}
-                        min={0}
-                      />
-                      <div className="text-[11px] text-muted-foreground mt-1">
-                        Set 0 to disable.
-                      </div>
-                    </Field>
-
-                    {isAdmin && (
-                      <div className="flex justify-end">
-                        <Button
-                          size="lg"
-                          className="bg-primary hover:bg-blue-600 gap-2 w-full md:w-auto"
-                          onClick={() => saveSettingsMutation.mutate(formData)}
-                          disabled={saveSettingsMutation.isPending}
-                        >
-                          {saveSettingsMutation.isPending ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <Save className="w-4 h-4" />
-                          )}
-                          Save Security
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-
           {/* BACKUP */}
           {activeSection === "backup" && (
             <motion.div
@@ -1678,130 +1593,32 @@ export const SettingsPage = () => {
                     <p className="text-sm text-muted-foreground mb-6">
                       Export products, sales, settings and staff permissions.
                     </p>
-                    <Button
-                      variant="outline"
-                      onClick={handleExportData}
-                      className="gap-2"
-                      disabled={!isAdmin}
-                    >
-                      <Download className="w-4 h-4" /> Export Backup
-                    </Button>
-                    {!isAdmin && (
-                      <div className="text-xs text-muted-foreground mt-2">
-                        Admins only.
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
+	                    <Button
+	                      variant="outline"
+	                      onClick={handleExportData}
+	                      className="gap-2"
+	                      disabled={!isAdmin || !isOnline}
+	                    >
+	                      <Download className="w-4 h-4" /> Export Backup
+	                    </Button>
+	                    {!isAdmin && (
+	                      <div className="text-xs text-muted-foreground mt-2">
+	                        Admins only.
+	                      </div>
+	                    )}
+	                    {isAdmin && !isOnline && (
+	                      <div className="text-xs text-muted-foreground mt-2">
+	                        Offline: connect to export a cloud backup.
+	                      </div>
+	                    )}
+	                  </div>
+	                </CardContent>
+	              </Card>
+	            </motion.div>
+	          )}
 
-          {/* NOTIFICATIONS */}
-          {activeSection === "notifications" && (
-            <motion.div
-              key="notifications"
-              initial={{ opacity: 0, x: 12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0 }}
-              className="space-y-4"
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle>Notifications</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="font-medium">Low Stock Alerts</p>
-                      <p className="text-xs text-muted-foreground">
-                        Show alerts when items are running low.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={!!formData.low_stock_alerts}
-                      onCheckedChange={(c) =>
-                        setFormData({ ...formData, low_stock_alerts: c })
-                      }
-                      disabled={!isAdmin}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                    <Field label="Low Stock Threshold">
-                      <Input
-                        type="number"
-                        value={String(formData.low_stock_threshold ?? 3)}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            low_stock_threshold: Math.max(
-                              0,
-                              num(e.target.value, 3)
-                            ),
-                          })
-                        }
-                        disabled={!isAdmin}
-                        min={0}
-                      />
-                    </Field>
-
-                    <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
-                      <div>
-                        <p className="font-medium">Daily Sales Summary</p>
-                        <p className="text-xs text-muted-foreground">
-                          Show summary at end of day.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={!!formData.daily_sales_summary}
-                        onCheckedChange={(c) =>
-                          setFormData({ ...formData, daily_sales_summary: c })
-                        }
-                        disabled={!isAdmin}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="font-medium">Sound Effects</p>
-                      <p className="text-xs text-muted-foreground">
-                        Beep/confirm sounds in POS.
-                      </p>
-                    </div>
-                    <Switch
-                      checked={!!formData.sound_effects}
-                      onCheckedChange={(c) =>
-                        setFormData({ ...formData, sound_effects: c })
-                      }
-                      disabled={!isAdmin}
-                    />
-                  </div>
-
-                  {isAdmin && (
-                    <div className="flex justify-end">
-                      <Button
-                        size="lg"
-                        className="bg-primary hover:bg-blue-600 gap-2"
-                        onClick={() => saveSettingsMutation.mutate(formData)}
-                        disabled={saveSettingsMutation.isPending}
-                      >
-                        {saveSettingsMutation.isPending ? (
-                          <Loader2 className="animate-spin" />
-                        ) : (
-                          <Save className="w-4 h-4" />
-                        )}
-                        Save Notifications
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+	        </AnimatePresence>
+	      </div>
 
       {/* USER DIALOG */}
       <Dialog

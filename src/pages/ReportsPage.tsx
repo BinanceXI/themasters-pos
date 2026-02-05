@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { 
@@ -22,13 +22,146 @@ import {
 } from 'recharts';
 import { cn } from '@/lib/utils';
 import { listExpenses } from '@/lib/expenses';
+import { listLocalServiceBookings, type LocalServiceBooking } from '@/lib/serviceBookings';
+
+const OFFLINE_QUEUE_KEY = 'themasters_offline_queue';
+const ORDERS_CACHE_KEY = 'themasters_orders_cache_v1';
+
+type OrderItemRow = {
+  quantity: number;
+  price_at_sale: number;
+  product_name: string;
+  service_note?: string | null;
+};
+
+type OrderRow = {
+  id: string;
+  total_amount: number;
+  payment_method: string | null;
+  created_at: string;
+  sale_type?: string | null;
+  booking_id?: string | null;
+  profiles?: { full_name?: string | null } | null;
+  order_items?: OrderItemRow[] | null;
+};
+
+function safeJSONParse<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function readOrdersCache(): OrderRow[] {
+  return safeJSONParse<OrderRow[]>(localStorage.getItem(ORDERS_CACHE_KEY), []);
+}
+
+function writeOrdersCache(rows: OrderRow[]) {
+  localStorage.setItem(ORDERS_CACHE_KEY, JSON.stringify(rows));
+}
+
+function upsertOrdersCache(rows: OrderRow[]) {
+  const cur = readOrdersCache();
+  const byId = new Map<string, OrderRow>();
+  for (const o of cur) {
+    if (o?.id) byId.set(String(o.id), o);
+  }
+  for (const o of rows) {
+    if (o?.id) byId.set(String(o.id), o);
+  }
+
+  const merged = Array.from(byId.values()).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const pruned = merged.slice(0, 3000);
+  writeOrdersCache(pruned);
+}
+
+function offlineQueueToOrders(): OrderRow[] {
+  const queue = safeJSONParse<any[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+  return (queue || [])
+    .map((sale: any) => {
+      const created_at = String(sale?.meta?.timestamp || new Date().toISOString());
+      const items = Array.isArray(sale?.items) ? sale.items : [];
+      const saleType =
+        String(sale?.saleType || sale?.meta?.saleType || '').trim() ||
+        (items.some((i: any) => i?.product?.type === 'service') ? 'service' : 'product');
+
+      const bookingId = sale?.bookingId ?? sale?.meta?.bookingId ?? null;
+
+      return {
+        id: String(sale?.meta?.receiptId || `offline-${created_at}`),
+        total_amount: Number(sale?.total || 0),
+        payment_method: String(sale?.payments?.[0]?.method || 'cash'),
+        created_at,
+        sale_type: saleType,
+        booking_id: bookingId ? String(bookingId) : null,
+        profiles: { full_name: 'Offline' },
+        order_items: items.map((i: any) => ({
+          quantity: Number(i?.quantity || 0),
+          price_at_sale: Number(i?.customPrice ?? i?.product?.price ?? 0),
+          product_name: String(i?.product?.name || 'Unknown'),
+          service_note: i?.customDescription ? String(i.customDescription) : null,
+        })),
+      } as OrderRow;
+    })
+    .filter(Boolean);
+}
+
+function inRange(iso: string, start: Date, end: Date) {
+  try {
+    return isWithinInterval(parseISO(iso), { start, end });
+  } catch {
+    return false;
+  }
+}
+
+async function fetchOrdersRemote(startISO: string, endISO: string): Promise<OrderRow[]> {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(
+      `
+        id,
+        total_amount,
+        payment_method,
+        created_at,
+        sale_type,
+        booking_id,
+        profiles (full_name),
+        order_items (
+          quantity,
+          price_at_sale,
+          product_name,
+          service_note
+        )
+      `
+    )
+    .gte('created_at', startISO)
+    .lte('created_at', endISO)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return (data as any) || [];
+}
 
 export const ReportsPage = () => {
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [rangeType, setRangeType] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('today');
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
     from: new Date(),
     to: new Date(),
   });
+
+  useEffect(() => {
+    const onOn = () => setIsOnline(true);
+    const onOff = () => setIsOnline(false);
+    window.addEventListener('online', onOn);
+    window.addEventListener('offline', onOff);
+    return () => {
+      window.removeEventListener('online', onOn);
+      window.removeEventListener('offline', onOff);
+    };
+  }, []);
 
   // --- P4 Widget: This month (Revenue vs Expenses) ---
   const monthRange = useMemo(() => {
@@ -40,16 +173,21 @@ export const ReportsPage = () => {
   }, []);
 
   const { data: monthOrders = [] } = useQuery({
-    queryKey: ['p4MonthRevenue', monthRange.from, monthRange.to],
-    enabled: navigator.onLine,
+    queryKey: ['p5MonthOrders', monthRange.from, monthRange.to, isOnline],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('total_amount, created_at')
-        .gte('created_at', monthRange.from)
-        .lte('created_at', monthRange.to);
-      if (error) throw error;
-      return data || [];
+      const start = parseISO(monthRange.from);
+      const end = parseISO(monthRange.to);
+
+      const queued = offlineQueueToOrders().filter((o) => inRange(o.created_at, start, end));
+      const cached = readOrdersCache().filter((o) => inRange(o.created_at, start, end));
+
+      if (!isOnline) {
+        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      }
+
+      const remote = await fetchOrdersRemote(monthRange.from, monthRange.to);
+      upsertOrdersCache(remote);
+      return [...remote, ...queued];
     },
     staleTime: 1000 * 60 * 5,
     refetchOnWindowFocus: false,
@@ -81,9 +219,57 @@ export const ReportsPage = () => {
     return { expenses, drawings, net };
   }, [monthExpenses, monthRevenue]);
 
+  const { data: monthBookings = [] } = useQuery({
+    queryKey: ['p5MonthBookings', monthRange.from, monthRange.to],
+    queryFn: async () => {
+      const all = await listLocalServiceBookings();
+      return all || [];
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
+  });
+
+  const monthServiceTotals = useMemo(() => {
+    const start = parseISO(monthRange.from);
+    const end = parseISO(monthRange.to);
+
+    let goodsRevenue = 0;
+    let servicesRevenue = 0;
+    let serviceDeposits = 0;
+    let serviceBalances = 0;
+
+    (monthOrders || []).forEach((o: any) => {
+      const amount = Number(o.total_amount || 0);
+      const saleType = String(o.sale_type || 'product');
+
+      if (saleType === 'service') servicesRevenue += amount;
+      else goodsRevenue += amount;
+
+      if (saleType !== 'service') return;
+      if (!o.booking_id) return;
+
+      const notes = (o.order_items || [])
+        .map((i: any) => String(i?.service_note || '').toLowerCase())
+        .filter(Boolean);
+
+      if (notes.some((n: string) => n.includes('deposit for booking'))) serviceDeposits += amount;
+      else if (notes.some((n: string) => n.includes('balance for booking'))) serviceBalances += amount;
+    });
+
+    let bookingsCreated = 0;
+    let bookingsCompleted = 0;
+    (monthBookings || []).forEach((b: LocalServiceBooking) => {
+      if (inRange(String(b.created_at || ''), start, end)) bookingsCreated += 1;
+      if (b.status === 'completed' && inRange(String(b.updated_at || b.created_at || ''), start, end)) bookingsCompleted += 1;
+    });
+
+    return { goodsRevenue, servicesRevenue, serviceDeposits, serviceBalances, bookingsCreated, bookingsCompleted };
+  }, [monthBookings, monthOrders, monthRange.from, monthRange.to]);
+
   // --- 1. FETCH REAL DATA ---
   const { data: salesData = [], isLoading } = useQuery({
-    queryKey: ['salesReport', rangeType, dateRange],
+    queryKey: ['salesReport', rangeType, dateRange, isOnline],
     queryFn: async () => {
       const now = new Date();
       let start = startOfDay(now);
@@ -97,27 +283,17 @@ export const ReportsPage = () => {
         end = endOfDay(dateRange.to || dateRange.from);
       }
 
-      // Fetch Orders with Items & Cashier Name
-      const { data, error } = await supabase
-        .from('orders')
-        .select(`
-          id,
-          total_amount,
-          payment_method,
-          created_at,
-          profiles (full_name),
-          order_items (
-            quantity,
-            price_at_sale,
-            product_name
-          )
-        `)
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-        .order('created_at', { ascending: true });
+      const queued = offlineQueueToOrders().filter((o) => inRange(o.created_at, start, end));
+      const cached = readOrdersCache().filter((o) => inRange(o.created_at, start, end));
 
-      if (error) throw error;
-      return data;
+      // Offline-first: render from cached + queued sales
+      if (!isOnline) {
+        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      }
+
+      const remote = await fetchOrdersRemote(start.toISOString(), end.toISOString());
+      upsertOrdersCache(remote);
+      return [...remote, ...queued];
     },
     staleTime: 1000 * 60 * 5 // Cache for 5 mins
   });
@@ -304,13 +480,54 @@ export const ReportsPage = () => {
             </div>
           </div>
         </CardContent>
-      </Card>
+	      </Card>
 
-      {/* KPI STATS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <StatCard 
-          title="Total Revenue" 
-          value={`$${stats.totalRevenue.toLocaleString()}`} 
+	      {/* P5: This month service breakdown */}
+	      <Card className="border-border/50 shadow-sm">
+	        <CardHeader className="pb-3">
+	          <CardTitle className="text-base font-semibold">This month (Goods vs Services)</CardTitle>
+	          {!isOnline && (
+	            <div className="text-xs text-muted-foreground">Offline: showing cached + queued sales</div>
+	          )}
+	        </CardHeader>
+	        <CardContent>
+	          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+	            <div className="rounded-xl border bg-card p-3">
+	              <div className="text-xs text-muted-foreground">Goods revenue</div>
+	              <div className="text-lg font-bold">${monthServiceTotals.goodsRevenue.toFixed(2)}</div>
+	            </div>
+	            <div className="rounded-xl border bg-card p-3">
+	              <div className="text-xs text-muted-foreground">Services revenue</div>
+	              <div className="text-lg font-bold">${monthServiceTotals.servicesRevenue.toFixed(2)}</div>
+	            </div>
+	            <div className="rounded-xl border bg-card p-3">
+	              <div className="text-xs text-muted-foreground">Service deposits</div>
+	              <div className="text-lg font-bold">${monthServiceTotals.serviceDeposits.toFixed(2)}</div>
+	            </div>
+	            <div className="rounded-xl border bg-card p-3">
+	              <div className="text-xs text-muted-foreground">Service balances</div>
+	              <div className="text-lg font-bold">${monthServiceTotals.serviceBalances.toFixed(2)}</div>
+	            </div>
+	            <div className="rounded-xl border bg-card p-3">
+	              <div className="text-xs text-muted-foreground">Bookings created</div>
+	              <div className="text-lg font-bold">{monthServiceTotals.bookingsCreated}</div>
+	            </div>
+	            <div className="rounded-xl border bg-card p-3">
+	              <div className="text-xs text-muted-foreground">Bookings completed</div>
+	              <div className="text-lg font-bold">{monthServiceTotals.bookingsCompleted}</div>
+	            </div>
+	          </div>
+	          <div className="mt-2 text-[11px] text-muted-foreground">
+	            Uses <span className="font-mono">orders.sale_type</span> + <span className="font-mono">orders.booking_id</span>; deposits/balances are identified from booking payment notes.
+	          </div>
+	        </CardContent>
+	      </Card>
+
+	      {/* KPI STATS */}
+	      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+	        <StatCard 
+	          title="Total Revenue" 
+	          value={`$${stats.totalRevenue.toLocaleString()}`} 
           icon={DollarSign} 
           trend="+12%" 
           color="text-emerald-500 bg-emerald-500/10" 
