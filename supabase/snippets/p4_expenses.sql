@@ -34,11 +34,26 @@ for select
 to authenticated
 using (true);
 
-drop policy if exists expenses_crud_authenticated on public.expenses;
-create policy expenses_crud_authenticated
+-- Postgres policy syntax doesn't allow "for insert, update, delete" in one statement,
+-- so we create separate policies for each operation.
+drop policy if exists expenses_insert_authenticated on public.expenses;
+create policy expenses_insert_authenticated
 on public.expenses
-for insert, update, delete
+for insert
+to authenticated
+with check (true);
+
+drop policy if exists expenses_update_authenticated on public.expenses;
+create policy expenses_update_authenticated
+on public.expenses
+for update
 to authenticated
 using (true)
 with check (true);
 
+drop policy if exists expenses_delete_authenticated on public.expenses;
+create policy expenses_delete_authenticated
+on public.expenses
+for delete
+to authenticated
+using (true);
