@@ -27,6 +27,27 @@ create table if not exists public.service_bookings (
 -- We standardize on booking_date_time.
 do $$
 begin
+  -- Ensure audit timestamps exist on older installs
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'service_bookings'
+      and column_name = 'created_at'
+  ) then
+    alter table public.service_bookings add column created_at timestamptz not null default now();
+  end if;
+
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'service_bookings'
+      and column_name = 'updated_at'
+  ) then
+    alter table public.service_bookings add column updated_at timestamptz not null default now();
+  end if;
+
   if exists (
     select 1
     from information_schema.columns
@@ -51,12 +72,21 @@ begin
       and column_name = 'booking_date_time'
   ) then
     alter table public.service_bookings add column booking_date_time timestamptz;
-    update public.service_bookings
-      set booking_date_time = coalesce(updated_at, created_at, now())
-      where booking_date_time is null;
-    alter table public.service_bookings alter column booking_date_time set not null;
   end if;
-end $$;
+
+  -- Backfill + enforce NOT NULL (older installs may have nulls)
+  update public.service_bookings
+    set booking_date_time = coalesce(updated_at, created_at, now())
+    where booking_date_time is null;
+
+  begin
+    alter table public.service_bookings alter column booking_date_time set not null;
+  exception when others then
+    -- If rows still violate NOT NULL for some reason, leave column nullable.
+    null;
+  end;
+end;
+$$;
 
 -- 2) updated_at trigger helper (idempotent)
 create or replace function public.set_updated_at()
