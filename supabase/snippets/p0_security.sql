@@ -63,9 +63,27 @@ using (
 );
 
 drop policy if exists profiles_admin_write on public.profiles;
-create policy profiles_admin_write
+-- Postgres policy syntax doesn't allow "for insert, update, delete" in one statement,
+-- so we create separate policies for each operation.
+drop policy if exists profiles_admin_insert on public.profiles;
+create policy profiles_admin_insert
 on public.profiles
-for insert, update, delete
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.profiles me
+    where me.id = auth.uid()
+      and me.role = 'admin'
+      and me.active is distinct from false
+  )
+);
+
+drop policy if exists profiles_admin_update on public.profiles;
+create policy profiles_admin_update
+on public.profiles
+for update
 to authenticated
 using (
   exists (
@@ -77,6 +95,21 @@ using (
   )
 )
 with check (
+  exists (
+    select 1
+    from public.profiles me
+    where me.id = auth.uid()
+      and me.role = 'admin'
+      and me.active is distinct from false
+  )
+);
+
+drop policy if exists profiles_admin_delete on public.profiles;
+create policy profiles_admin_delete
+on public.profiles
+for delete
+to authenticated
+using (
   exists (
     select 1
     from public.profiles me
@@ -96,9 +129,28 @@ to authenticated
 using (true);
 
 drop policy if exists products_inventory_write on public.products;
-create policy products_inventory_write
+drop policy if exists products_inventory_insert on public.products;
+create policy products_inventory_insert
 on public.products
-for insert, update, delete
+for insert
+to authenticated
+with check (
+  exists (
+    select 1
+    from public.profiles me
+    where me.id = auth.uid()
+      and me.active is distinct from false
+      and (
+        me.role = 'admin'
+        or coalesce((me.permissions ->> 'allowInventory')::boolean, false) = true
+      )
+  )
+);
+
+drop policy if exists products_inventory_update on public.products;
+create policy products_inventory_update
+on public.products
+for update
 to authenticated
 using (
   exists (
@@ -125,3 +177,20 @@ with check (
   )
 );
 
+drop policy if exists products_inventory_delete on public.products;
+create policy products_inventory_delete
+on public.products
+for delete
+to authenticated
+using (
+  exists (
+    select 1
+    from public.profiles me
+    where me.id = auth.uid()
+      and me.active is distinct from false
+      and (
+        me.role = 'admin'
+        or coalesce((me.permissions ->> 'allowInventory')::boolean, false) = true
+      )
+  )
+);

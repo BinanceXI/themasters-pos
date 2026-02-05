@@ -6,6 +6,9 @@
 -- - public.orders.sale_type ("product" | "service")
 -- - public.orders.booking_id (link to service bookings; intentionally no FK for offline sync safety)
 
+-- Required for gen_random_uuid()
+create extension if not exists pgcrypto;
+
 -- 1) Service bookings table (minimal fields)
 create table if not exists public.service_bookings (
   id uuid primary key default gen_random_uuid(),
@@ -57,4 +60,3 @@ end $$;
 
 create index if not exists orders_sale_type_idx on public.orders (sale_type);
 create index if not exists orders_booking_id_idx on public.orders (booking_id);
-

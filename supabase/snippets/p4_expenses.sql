@@ -1,6 +1,9 @@
 -- Phase 4 (P4) expenses + owner drawings (offline-first) + reporting support
 -- Apply in Supabase SQL editor (or via migrations).
 
+-- Required for gen_random_uuid()
+create extension if not exists pgcrypto;
+
 create table if not exists public.expenses (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
