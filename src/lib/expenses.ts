@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 
-export type ExpenseType = "expense" | "owner_drawing";
+export type ExpenseType = "expense" | "owner_draw";
 
 export type Expense = {
   id: string;
@@ -141,6 +141,9 @@ function normalizeMoney(n: any) {
 
 function normalizeExpense(raw: Expense): Expense {
   const now = new Date().toISOString();
+  const expenseTypeRaw = (raw.expense_type || "expense") as any;
+  const expenseType: ExpenseType =
+    expenseTypeRaw === "owner_drawing" ? "owner_draw" : (expenseTypeRaw as ExpenseType);
   return {
     id: String(raw.id || "").trim(),
     created_at: raw.created_at || now,
@@ -152,7 +155,7 @@ function normalizeExpense(raw: Expense): Expense {
     notes: raw.notes == null ? null : String(raw.notes),
     amount: normalizeMoney(raw.amount),
     payment_method: raw.payment_method == null ? null : String(raw.payment_method),
-    expense_type: (raw.expense_type || "expense") as ExpenseType,
+    expense_type: expenseType,
     synced_at: raw.synced_at ?? null,
   };
 }

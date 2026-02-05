@@ -168,7 +168,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 
       // 3) Online verification (and seed offline password hash locally)
       const verify = await callVerifyPassword(u, password);
-      if (!verify.ok) throw new Error(verify?.error || "Invalid credentials");
+      if (!verify.ok) throw new Error(verify.error || "Invalid credentials");
 
       const { error: otpErr } = await supabase.auth.verifyOtp({
         token_hash: verify.token_hash,

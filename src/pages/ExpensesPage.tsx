@@ -37,7 +37,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
-type RangeType = "today" | "week" | "month";
+type RangeType = "today" | "week" | "month" | "custom";
 
 function money(n: any) {
   const num = typeof n === "number" ? n : Number(String(n ?? "").trim());
@@ -74,6 +74,15 @@ export const ExpensesPage = () => {
   const [rangeType, setRangeType] = useState<RangeType>("today");
   const [typeFilter, setTypeFilter] = useState<"all" | ExpenseType>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [customFrom, setCustomFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString().slice(0, 10);
+  });
+  const [customTo, setCustomTo] = useState<string>(() => {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  });
 
   const [queueCount, setQueueCount] = useState<number>(() => getExpenseQueueCount());
   const [syncing, setSyncing] = useState(false);
@@ -96,8 +105,16 @@ export const ExpensesPage = () => {
     if (rangeType === "week") {
       return { from: startOfDay(subDays(now, 7)).toISOString(), to: endOfDay(now).toISOString() };
     }
+    if (rangeType === "custom") {
+      const fromDate = new Date(`${customFrom}T00:00:00`);
+      const toDate = new Date(`${customTo}T23:59:59`);
+      return {
+        from: startOfDay(fromDate).toISOString(),
+        to: endOfDay(toDate).toISOString(),
+      };
+    }
     return { from: startOfMonth(now).toISOString(), to: endOfMonth(now).toISOString() };
-  }, [rangeType]);
+  }, [rangeType, customFrom, customTo]);
 
   const { data: expenses = [] } = useQuery({
     queryKey: ["expenses", range.from, range.to],
@@ -152,7 +169,7 @@ export const ExpensesPage = () => {
     let totalDrawings = 0;
     for (const e of filtered) {
       const amt = money(e.amount);
-      if (e.expense_type === "owner_drawing") totalDrawings += amt;
+      if (e.expense_type === "owner_draw") totalDrawings += amt;
       else totalExpenses += amt;
     }
     const net = money(revenue - (totalExpenses + totalDrawings));
@@ -374,9 +391,28 @@ export const ExpensesPage = () => {
               <SelectItem value="today">Today</SelectItem>
               <SelectItem value="week">Last 7 days</SelectItem>
               <SelectItem value="month">This month</SelectItem>
+              <SelectItem value="custom">Custom</SelectItem>
             </SelectContent>
           </Select>
         </div>
+
+        {rangeType === "custom" ? (
+          <div className="space-y-2">
+            <div className="text-xs text-muted-foreground">From / To</div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+              <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-xs text-muted-foreground">From / To</div>
+            <div className="grid grid-cols-2 gap-2 opacity-50">
+              <Input type="date" value={range.from.slice(0, 10)} readOnly />
+              <Input type="date" value={range.to.slice(0, 10)} readOnly />
+            </div>
+          </div>
+        )}
 
         <div className="space-y-2">
           <div className="text-xs text-muted-foreground">Type</div>
@@ -387,7 +423,7 @@ export const ExpensesPage = () => {
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="expense">Expenses</SelectItem>
-              <SelectItem value="owner_drawing">Owner drawings</SelectItem>
+              <SelectItem value="owner_draw">Owner drawings</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -424,12 +460,12 @@ export const ExpensesPage = () => {
                     <div
                       className={cn(
                         "inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full border",
-                        e.expense_type === "owner_drawing"
+                        e.expense_type === "owner_draw"
                           ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
                           : "border-amber-500/30 bg-amber-500/10 text-amber-500"
                       )}
                     >
-                      {e.expense_type === "owner_drawing" ? (
+                      {e.expense_type === "owner_draw" ? (
                         <>
                           <ArrowUpRight className="w-3 h-3" /> Owner drawing
                         </>
@@ -505,7 +541,7 @@ export const ExpensesPage = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="expense">Expense</SelectItem>
-                  <SelectItem value="owner_drawing">Owner drawing</SelectItem>
+                  <SelectItem value="owner_draw">Owner drawing</SelectItem>
                 </SelectContent>
               </Select>
             </div>

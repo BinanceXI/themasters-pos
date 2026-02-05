@@ -74,7 +74,7 @@ export const ReportsPage = () => {
     let drawings = 0;
     (monthExpenses || []).forEach((e: any) => {
       const amt = Number(e.amount || 0);
-      if (e.expense_type === 'owner_drawing') drawings += amt;
+      if (e.expense_type === 'owner_draw' || e.expense_type === 'owner_drawing') drawings += amt;
       else expenses += amt;
     });
     const net = monthRevenue - (expenses + drawings);
