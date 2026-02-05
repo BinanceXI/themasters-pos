@@ -23,7 +23,7 @@ export type VerifyPasswordResponse =
       token_hash: string;
       type: "magiclink";
     }
-  | { ok: false; error?: string; details?: string };
+  | { ok: false; error: string; details?: string };
 
 export async function verifyPasswordLocal(username: string, password: string): Promise<LocalAuthUser | null> {
   const u = sanitizeUsername(username);
@@ -65,17 +65,22 @@ export async function callVerifyPassword(username: string, password: string): Pr
 
   if (!url || !anonKey) return { ok: false, error: "Supabase env missing" };
 
-  const res = await fetch(`${url}/functions/v1/verify_password`, {
-    method: "POST",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ username, password }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${url}/functions/v1/verify_password`, {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch (e: any) {
+    return { ok: false, error: e?.message || "Failed to fetch" };
+  }
 
   const data = (await res.json().catch(() => ({}))) as any;
-  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}`, details: data?.details };
+  if (!res.ok) return { ok: false, error: String(data?.error || `HTTP ${res.status}`), details: data?.details };
   return data as VerifyPasswordResponse;
 }
