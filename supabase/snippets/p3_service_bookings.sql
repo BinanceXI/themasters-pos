@@ -23,6 +23,41 @@ create table if not exists public.service_bookings (
   updated_at timestamptz not null default now()
 );
 
+-- If the table already existed with a different column name, make this snippet safe to rerun.
+-- We standardize on booking_date_time.
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'service_bookings'
+      and column_name = 'booking_datetime'
+  ) and not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'service_bookings'
+      and column_name = 'booking_date_time'
+  ) then
+    alter table public.service_bookings rename column booking_datetime to booking_date_time;
+  end if;
+
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'service_bookings'
+      and column_name = 'booking_date_time'
+  ) then
+    alter table public.service_bookings add column booking_date_time timestamptz;
+    update public.service_bookings
+      set booking_date_time = coalesce(updated_at, created_at, now())
+      where booking_date_time is null;
+    alter table public.service_bookings alter column booking_date_time set not null;
+  end if;
+end $$;
+
 -- 2) updated_at trigger helper (idempotent)
 create or replace function public.set_updated_at()
 returns trigger as $$
