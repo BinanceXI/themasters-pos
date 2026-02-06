@@ -13,6 +13,13 @@ import type { CartItem, Product, SyncStatus, Sale, POSMode, Discount } from "@/t
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { getExpenseQueueCount, syncExpenses } from "@/lib/expenses";
+import { getInventoryQueueCount, processInventoryQueue } from "@/lib/inventorySync";
+import {
+  getUnsyncedServiceBookingsCount,
+  pullRecentServiceBookings,
+  pushUnsyncedServiceBookings,
+} from "@/lib/serviceBookings";
 
 /* ---------------------------------- USER TYPES --------------------------------- */
 export type Role = "admin" | "cashier";
@@ -235,6 +242,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
   const [activeDiscount, setActiveDiscount] = useState<Discount | null>(null);
 
   const syncingRef = useRef(false);
+  const globalSyncingRef = useRef(false);
 
   /* --------------------------- SESSION PERSISTENCE -------------------------- */
 
@@ -250,6 +258,31 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     return !!currentUser.permissions?.[permission];
   };
 
+  const getSalesQueueCount = useCallback(() => {
+    try {
+      const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+      return queue.length;
+    } catch {
+      return 0;
+    }
+  }, []);
+
+  const refreshPendingSyncCount = useCallback(async () => {
+    const sales = getSalesQueueCount();
+    const inventory = getInventoryQueueCount();
+    const expenses = getExpenseQueueCount();
+    let bookings = 0;
+    try {
+      bookings = await getUnsyncedServiceBookingsCount();
+    } catch {
+      bookings = 0;
+    }
+
+    const total = sales + inventory + expenses + bookings;
+    setPendingSyncCount(total);
+    return { sales, inventory, expenses, bookings, total };
+  }, [getSalesQueueCount]);
+
   /* ---------------------- LOAD HELD SALES & QUEUE --------------------------- */
 
   useEffect(() => {
@@ -260,9 +293,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         items: ensureLineIds(s.items || []),
       }))
     );
-
-    const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
-    setPendingSyncCount(queue.length);
+    void refreshPendingSyncCount();
   }, []);
 
   useEffect(() => {
@@ -273,12 +304,12 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
     queue.push(sale);
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-    setPendingSyncCount(queue.length);
+    void refreshPendingSyncCount();
   };
 
   const writeQueue = (queue: OfflineSale[]) => {
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-    setPendingSyncCount(queue.length);
+    void refreshPendingSyncCount();
   };
 
   /* ------------------------------ OFFLINE SYNC ------------------------------ */
@@ -382,13 +413,70 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [queryClient]);
 
+  const runGlobalSync = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = !!opts?.silent;
+      if (globalSyncingRef.current) return;
+      if (!currentUser) return;
+      if (!navigator.onLine) return;
+
+      globalSyncingRef.current = true;
+      setSyncStatus("syncing");
+
+      let anyFailed = false;
+
+      try {
+        // Sales
+        try {
+          await processOfflineQueue({ silent });
+        } catch {
+          anyFailed = true;
+        }
+
+        // Inventory
+        try {
+          await processInventoryQueue({ silent, queryClient });
+        } catch {
+          anyFailed = true;
+        }
+
+        // Expenses
+        try {
+          await syncExpenses();
+        } catch {
+          anyFailed = true;
+        }
+
+        // Service bookings
+        try {
+          await pushUnsyncedServiceBookings();
+        } catch {
+          anyFailed = true;
+        }
+        try {
+          await pullRecentServiceBookings(30);
+        } catch {
+          // pull failures shouldn't block everything
+        }
+      } finally {
+        globalSyncingRef.current = false;
+        const counts = await refreshPendingSyncCount();
+
+        if (!navigator.onLine) setSyncStatus("offline");
+        else if (anyFailed || counts.total > 0) setSyncStatus("error");
+        else setSyncStatus("online");
+      }
+    },
+    [globalSyncingRef, processOfflineQueue, queryClient, refreshPendingSyncCount]
+  );
+
   /* ---------------------------- ONLINE / OFFLINE ---------------------------- */
 
   useEffect(() => {
     const update = async () => {
       const online = navigator.onLine;
       setSyncStatus(online ? "online" : "offline");
-      if (online) await processOfflineQueue();
+      if (online) await runGlobalSync({ silent: true });
     };
 
     window.addEventListener("online", update);
@@ -399,17 +487,56 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
     };
-  }, [processOfflineQueue]);
+  }, [runGlobalSync]);
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!currentUser) return;
+      if (!navigator.onLine) return;
+      if (!session) return;
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        runGlobalSync({ silent: true });
+      }
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, [currentUser, runGlobalSync]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!navigator.onLine) return;
+    runGlobalSync({ silent: true });
+  }, [currentUser, runGlobalSync]);
+
+  useEffect(() => {
+    const onQueueChanged = () => {
+      void refreshPendingSyncCount();
+      if (navigator.onLine) runGlobalSync({ silent: true });
+    };
+
+    window.addEventListener("themasters:queue_changed", onQueueChanged as any);
+    return () => window.removeEventListener("themasters:queue_changed", onQueueChanged as any);
+  }, [refreshPendingSyncCount, runGlobalSync]);
 
   // Background auto-retry (helps Capacitor where "online" events can be flaky).
   useEffect(() => {
     if (pendingSyncCount <= 0) return;
     const t = setInterval(() => {
       if (!navigator.onLine) return;
-      processOfflineQueue({ silent: true });
+      runGlobalSync({ silent: true });
     }, 30_000);
     return () => clearInterval(t);
-  }, [pendingSyncCount, processOfflineQueue]);
+  }, [pendingSyncCount, runGlobalSync]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!navigator.onLine) return;
+      runGlobalSync({ silent: true });
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [runGlobalSync]);
 
   /* ------------------------------- CART LOGIC ------------------------------- */
 

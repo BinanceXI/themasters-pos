@@ -19,12 +19,16 @@ import themastersLogo from "@/assets/themasters-logo.png";
 import { Capacitor } from "@capacitor/core";
 import { NativeBiometric } from "@capgo/capacitor-native-biometric";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 
 const sanitizeUsername = (raw: string) =>
   (raw || "")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]/g, "");
+
+const BIOMETRIC_SERVER = "themasterspos";
+const BIOMETRIC_ENABLED_KEY = "themasters_biometric_enabled_v1";
 
 export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const { setCurrentUser, syncStatus } = usePOS();
@@ -44,6 +48,15 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const [setupPassword2, setSetupPassword2] = useState("");
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState("");
+
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [saveForBiometric, setSaveForBiometric] = useState(() => {
+    try {
+      return localStorage.getItem(BIOMETRIC_ENABLED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const usernameRef = useRef<HTMLInputElement>(null);
   const secretRef = useRef<HTMLInputElement>(null);
@@ -69,6 +82,26 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    NativeBiometric.isAvailable()
+      .then((res) => setBiometricAvailable(!!res?.isAvailable))
+      .catch(() => setBiometricAvailable(false));
+  }, []);
+
+  const maybeSaveBiometricCredentials = async (u: string, password: string) => {
+    if (!Capacitor.isNativePlatform()) return;
+    if (!saveForBiometric) return;
+    try {
+      const available = await NativeBiometric.isAvailable();
+      if (!available?.isAvailable) return;
+      await NativeBiometric.setCredentials({ server: BIOMETRIC_SERVER, username: u, password });
+      localStorage.setItem(BIOMETRIC_ENABLED_KEY, "1");
+    } catch {
+      // best-effort; don't block login
+    }
+  };
 
   // ✅ Fingerprint unlock: offline-first (unlocks the local user on this device).
   const handleFingerprintLogin = async () => {
@@ -106,6 +139,28 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       if (local.active === false) {
         toast.error("Account disabled");
         return;
+      }
+
+      // Best-effort: restore a real Supabase session for syncing (requires saved credentials).
+      if (navigator.onLine) {
+        try {
+          const creds = await NativeBiometric.getCredentials({ server: BIOMETRIC_SERVER });
+          const cu = sanitizeUsername(creds?.username || "");
+          const cp = String((creds as any)?.password || "");
+
+          if (cu && cp && cu === local.username) {
+            const verify = await callVerifyPassword(cu, cp);
+            if (verify.ok) {
+              const { error: otpErr } = await supabase.auth.verifyOtp({
+                token_hash: verify.token_hash,
+                type: "magiclink",
+              });
+              if (otpErr) throw otpErr;
+            }
+          }
+        } catch {
+          // keep offline login working even if cloud session can't be restored
+        }
       }
 
       setCurrentUser({
@@ -153,37 +208,29 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         } as any);
 
         sessionStorage.setItem("themasters_session_active", "1");
-        localStorage.setItem("themasters_last_username", localUser.username);
+      localStorage.setItem("themasters_last_username", localUser.username);
 
-        // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
-        if (navigator.onLine) {
-          try {
-            const email = `${u}@themasterspos.app`;
-            const { error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+      // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
+      if (navigator.onLine) {
+        try {
+          const verify = await callVerifyPassword(u, password);
+          if (!verify.ok) throw new Error(verify.error || "Cloud session unavailable");
 
-            // Best-effort fallback: edge-function magiclink token (older/migrated accounts)
-            if (signErr) {
-              const verify = await callVerifyPassword(u, password);
-              if (verify.ok) {
-                const { error: otpErr } = await supabase.auth.verifyOtp({
-                  token_hash: verify.token_hash,
-                  type: "magiclink",
-                });
-                if (otpErr) throw otpErr;
-              } else {
-                const msg = "error" in verify ? String(verify.error || "") : "";
-                throw new Error(msg || signErr.message || "Cloud session unavailable");
-              }
-            }
-          } catch (e: any) {
-            toast.warning(e?.message || "Signed in offline; cloud session unavailable");
-          }
+          const { error: otpErr } = await supabase.auth.verifyOtp({
+            token_hash: verify.token_hash,
+            type: "magiclink",
+          });
+          if (otpErr) throw otpErr;
+        } catch (e: any) {
+          toast.warning(e?.message || "Signed in offline; cloud session unavailable");
         }
-
-        toast.success(`Welcome ${localUser.full_name || localUser.username}`);
-        onLogin();
-        return;
       }
+
+      void maybeSaveBiometricCredentials(u, password);
+      toast.success(`Welcome ${localUser.full_name || localUser.username}`);
+      onLogin();
+      return;
+    }
 
       // 2) No local user yet:
       if (!navigator.onLine) {
@@ -218,6 +265,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         sessionStorage.setItem("themasters_session_active", "1");
         localStorage.setItem("themasters_last_username", verify.user.username);
 
+        void maybeSaveBiometricCredentials(u, password);
         toast.success(`Welcome ${verify.user.full_name || verify.user.username}`);
         onLogin();
         return;
@@ -228,7 +276,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       const { data: signIn, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
 
       if (signErr || !signIn?.user?.id) {
-        const msg = "error" in verify ? String(verify.error || "") : "";
+        const msg = verify.ok ? "" : String(verify.error || "");
         const merged = msg || signErr?.message || "Invalid credentials";
         if (/cors|preflight|failed to fetch|err_failed/i.test(merged) && localUserCount === 0) {
           throw new Error("Cannot reach server to verify credentials. Tap “Set up Offline Admin” to start offline.");
@@ -260,6 +308,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       sessionStorage.setItem("themasters_session_active", "1");
       localStorage.setItem("themasters_last_username", String((profile as any).username || u));
 
+      void maybeSaveBiometricCredentials(u, password);
       toast.success(`Welcome ${(profile as any).full_name || (profile as any).username || u}`);
       onLogin();
     } catch (err: any) {
@@ -325,6 +374,8 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 
       sessionStorage.setItem("themasters_session_active", "1");
       localStorage.setItem("themasters_last_username", u);
+
+      void maybeSaveBiometricCredentials(u, p1);
       toast.success(`Welcome ${fullName}`);
       onLogin();
     } catch (err: any) {
@@ -449,10 +500,23 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
               {loading ? "Signing in…" : "Access System"}
             </Button>
 
-            {/* ✅ FIX: this is the exact button placement */}
-            <Button type="button" variant="outline" className="w-full h-12" onClick={handleFingerprintLogin}>
-              Use Fingerprint
-            </Button>
+            {Capacitor.isNativePlatform() && biometricAvailable && (
+              <Button type="button" variant="outline" className="w-full h-12" onClick={handleFingerprintLogin}>
+                Use Fingerprint
+              </Button>
+            )}
+
+            {biometricAvailable && (
+              <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2">
+                <div className="text-sm">
+                  <div className="font-medium">Enable fingerprint quick login</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Saves username + password securely on this device (for cloud sync without typing).
+                  </div>
+                </div>
+                <Switch checked={saveForBiometric} onCheckedChange={setSaveForBiometric} />
+              </div>
+            )}
 
             <div className="text-xs text-muted-foreground text-center">
               Offline-first sign-in uses your local password. If online, a cloud session is also created for syncing.

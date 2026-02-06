@@ -53,60 +53,18 @@ import { usePOS } from "@/contexts/POSContext";
 import { cn } from "@/lib/utils";
 import { Product } from "@/types/pos";
 import { BarcodeScanner } from "@/components/pos/BarcodeScanner";
+import {
+  enqueueInventoryMutation,
+  getInventoryQueueCount,
+  processInventoryQueue,
+  type ProductUpsertPayload,
+} from "@/lib/inventorySync";
 
 function isEditableTarget(el: Element | null) {
   if (!el) return false;
   const tag = (el as HTMLElement).tagName?.toLowerCase();
   const editable = (el as HTMLElement).getAttribute?.("contenteditable");
   return tag === "input" || tag === "textarea" || editable === "true";
-}
-
-const PRODUCTS_QUEUE_KEY = "themasters_products_mutation_queue_v2";
-
-type ProductUpsertPayload = {
-  id: string;
-  name: string;
-  price: number;
-  cost_price: number;
-  stock_quantity: number;
-  type: string;
-  category: string;
-  sku?: string | null;
-  shortcut_code?: string | null;
-  image_url?: string | null;
-  barcode?: string | null;
-  low_stock_threshold?: number | null;
-  is_variable_price?: boolean | null;
-  requires_note?: boolean | null;
-  is_archived?: boolean | null;
-};
-
-type OfflineMutation =
-  | { kind: "upsert_product"; payload: ProductUpsertPayload; ts: number }
-  | { kind: "archive_product"; id: string; ts: number }
-  | { kind: "set_stock"; id: string; stock_quantity: number; ts: number };
-
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function enqueueMutation(m: OfflineMutation) {
-  const q = safeParse<OfflineMutation[]>(localStorage.getItem(PRODUCTS_QUEUE_KEY), []);
-  q.push(m);
-  localStorage.setItem(PRODUCTS_QUEUE_KEY, JSON.stringify(q));
-}
-
-function readQueue() {
-  return safeParse<OfflineMutation[]>(localStorage.getItem(PRODUCTS_QUEUE_KEY), []);
-}
-
-function writeQueue(next: OfflineMutation[]) {
-  localStorage.setItem(PRODUCTS_QUEUE_KEY, JSON.stringify(next));
 }
 
 function uuid() {
@@ -192,64 +150,9 @@ export const InventoryPage = () => {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [visibleProducts]);
 
-  // ------- Seamless offline sync for inventory mutations -------
   const processQueue = useCallback(async () => {
-    if (!navigator.onLine) return;
-
-    const queue = readQueue();
-    if (!queue.length) return;
-
-    toast.loading(`Syncing ${queue.length} inventory changes...`);
-
-    const failed: OfflineMutation[] = [];
-
-    for (const m of queue) {
-      try {
-        if (m.kind === "upsert_product") {
-          const { error } = await supabase
-            .from("products")
-            .upsert(m.payload, { onConflict: "id" });
-          if (error) throw error;
-        }
-
-        if (m.kind === "archive_product") {
-          const { error } = await supabase
-            .from("products")
-            .update({ is_archived: true })
-            .eq("id", m.id);
-          if (error) throw error;
-        }
-
-        if (m.kind === "set_stock") {
-          const { error } = await supabase
-            .from("products")
-            .update({ stock_quantity: m.stock_quantity })
-            .eq("id", m.id);
-          if (error) throw error;
-        }
-      } catch (e) {
-        console.error("Queue item failed", m, e);
-        failed.push(m);
-      }
-    }
-
-    writeQueue(failed);
-    toast.dismiss();
-
-    if (!failed.length) {
-      toast.success("Inventory synced");
-      queryClient.invalidateQueries({ queryKey: ["products"] });
-    } else {
-      toast.error(`${failed.length} inventory changes failed to sync`);
-    }
+    await processInventoryQueue({ queryClient });
   }, [queryClient]);
-
-  useEffect(() => {
-    const onOnline = () => processQueue();
-    window.addEventListener("online", onOnline);
-    processQueue();
-    return () => window.removeEventListener("online", onOnline);
-  }, [processQueue]);
 
   // ------- Profit calcs -------
   const formPrice = parseFloat(newItem.price) || 0;
@@ -448,7 +351,7 @@ export const InventoryPage = () => {
           .upsert(payload, { onConflict: "id" });
         if (error) throw error;
       } else {
-        enqueueMutation({ kind: "upsert_product", payload, ts: Date.now() });
+        enqueueInventoryMutation({ kind: "upsert_product", payload, ts: Date.now() });
       }
     },
     onSuccess: () => {
@@ -487,7 +390,7 @@ export const InventoryPage = () => {
           .eq("id", id);
         if (error) throw error;
       } else {
-        enqueueMutation({ kind: "archive_product", id, ts: Date.now() });
+        enqueueInventoryMutation({ kind: "archive_product", id, ts: Date.now() });
       }
     },
     onSuccess: () => {
@@ -523,7 +426,7 @@ export const InventoryPage = () => {
           .eq("id", id);
         if (error) throw error;
       } else {
-        enqueueMutation({ kind: "set_stock", id, stock_quantity: newStock, ts: Date.now() });
+        enqueueInventoryMutation({ kind: "set_stock", id, stock_quantity: newStock, ts: Date.now() });
       }
     },
     onSuccess: () => {
@@ -609,7 +512,7 @@ export const InventoryPage = () => {
     (p: any) => p.type === "good" && (p.stock_quantity || 0) === 0
   ).length;
 
-  const queuedCount = readQueue().length;
+  const queuedCount = getInventoryQueueCount();
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-20">

@@ -66,6 +66,14 @@ function saveLsQueueMap(map: Record<string, ExpenseQueueItem>) {
   setQueueCount(Object.keys(map).length);
 }
 
+function notifyQueueChanged() {
+  try {
+    window.dispatchEvent(new Event("themasters:queue_changed"));
+  } catch {
+    // ignore
+  }
+}
+
 let queueCount = (() => {
   const raw = localStorage.getItem(LS_QUEUE_COUNT_KEY);
   const n = raw == null ? NaN : Number(raw);
@@ -272,6 +280,7 @@ async function upsertQueueLocal(item: ExpenseQueueItem): Promise<void> {
   const map = loadLsQueueMap();
   map[key] = { ...item, id: key };
   saveLsQueueMap(map);
+  notifyQueueChanged();
 
   if (!isIdbAvailable()) return;
   try {
@@ -290,6 +299,7 @@ async function deleteQueueLocal(id: string): Promise<void> {
   const map = loadLsQueueMap();
   delete map[key];
   saveLsQueueMap(map);
+  notifyQueueChanged();
 
   if (!isIdbAvailable()) return;
   try {

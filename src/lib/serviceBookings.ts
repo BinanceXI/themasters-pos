@@ -47,6 +47,14 @@ function saveLsMap(map: Record<string, LocalServiceBooking>) {
   localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(map));
 }
 
+function notifyQueueChanged() {
+  try {
+    window.dispatchEvent(new Event("themasters:queue_changed"));
+  } catch {
+    // ignore
+  }
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -170,6 +178,7 @@ export async function upsertLocalServiceBooking(booking: LocalServiceBooking): P
     const map = loadLsMap();
     map[key] = normalized;
     saveLsMap(map);
+    notifyQueueChanged();
     return;
   }
 
@@ -182,6 +191,8 @@ export async function upsertLocalServiceBooking(booking: LocalServiceBooking): P
     map[key] = normalized;
     saveLsMap(map);
   }
+
+  notifyQueueChanged();
 }
 
 export async function deleteLocalServiceBooking(id: string): Promise<void> {
@@ -192,6 +203,7 @@ export async function deleteLocalServiceBooking(id: string): Promise<void> {
     const map = loadLsMap();
     delete map[key];
     saveLsMap(map);
+    notifyQueueChanged();
     return;
   }
 
@@ -204,6 +216,8 @@ export async function deleteLocalServiceBooking(id: string): Promise<void> {
     delete map[key];
     saveLsMap(map);
   }
+
+  notifyQueueChanged();
 }
 
 export async function pushUnsyncedServiceBookings(): Promise<{ pushed: number; failed: number }> {
@@ -255,6 +269,15 @@ export async function pushUnsyncedServiceBookings(): Promise<{ pushed: number; f
   return { pushed: unsynced.length, failed: 0 };
 }
 
+export async function getUnsyncedServiceBookingsCount(): Promise<number> {
+  try {
+    const all = await listLocalServiceBookings();
+    return all.filter((b) => !b.synced).length;
+  } catch {
+    return 0;
+  }
+}
+
 export async function pullRecentServiceBookings(daysBack = 30): Promise<{ pulled: number }> {
   if (!navigator.onLine) return { pulled: 0 };
 
@@ -304,4 +327,3 @@ export async function pullRecentServiceBookings(daysBack = 30): Promise<{ pulled
 
   return { pulled };
 }
-
