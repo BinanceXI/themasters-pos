@@ -11,6 +11,7 @@ import React, {
 } from "react";
 import type { CartItem, Product, SyncStatus, Sale, POSMode, Discount } from "@/types/pos";
 import { supabase } from "@/lib/supabase";
+import { ensureSupabaseSession } from "@/lib/supabaseSession";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { getExpenseQueueCount, syncExpenses } from "@/lib/expenses";
@@ -176,10 +177,10 @@ const ensureLineIds = (items: any[]): CartItem[] =>
     discount: typeof it.discount === "number" ? it.discount : 0,
   }));
 
-const safeJSONParse = <T,>(raw: string | null, fallback: T): T => {
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
+  const safeJSONParse = <T,>(raw: string | null, fallback: T): T => {
+    if (!raw) return fallback;
+    try {
+      return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
@@ -198,10 +199,10 @@ const deriveSaleType = (items: CartItem[], fallback: SaleType = "product"): Sale
   return fallback;
 };
 
-/* -------------------------- STOCK DECREMENT RPC ---------------------------- */
+  /* -------------------------- STOCK DECREMENT RPC ---------------------------- */
 
-const decrementStockForItems = async (items: CartItem[]) => {
-  for (const item of items) {
+  const decrementStockForItems = async (items: CartItem[]) => {
+    for (const item of items) {
     if (item.product?.type !== "good") continue;
     const qty = Number(item.quantity) || 0;
     if (qty <= 0) continue;
@@ -243,6 +244,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   const syncingRef = useRef(false);
   const globalSyncingRef = useRef(false);
+  const lastCloudAuthNoticeRef = useRef<number>(0);
 
   /* --------------------------- SESSION PERSISTENCE -------------------------- */
 
@@ -300,30 +302,57 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem(HELD_SALES_KEY, JSON.stringify(heldSales));
   }, [heldSales]);
 
+  const notifyQueueChanged = () => {
+    try {
+      window.dispatchEvent(new Event("themasters:queue_changed"));
+    } catch {
+      // ignore
+    }
+  };
+
   const saveToOfflineQueue = (sale: OfflineSale) => {
     const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
     queue.push(sale);
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    notifyQueueChanged();
     void refreshPendingSyncCount();
   };
 
   const writeQueue = (queue: OfflineSale[]) => {
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    notifyQueueChanged();
     void refreshPendingSyncCount();
+  };
+
+  const annotateSalesQueueError = (msg: string) => {
+    const message = String(msg || "").trim();
+    if (!message) return;
+
+    const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
+    if (!queue.length) return;
+
+    let changed = false;
+    const next = queue.map((s) => {
+      if (s.lastError) return s; // keep the original error if present
+      changed = true;
+      return { ...s, lastError: message };
+    });
+
+    if (changed) writeQueue(next);
   };
 
   /* ------------------------------ OFFLINE SYNC ------------------------------ */
 
   const processOfflineQueue = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = !!opts?.silent;
-    if (syncingRef.current) return;
-    if (!navigator.onLine) return;
+    if (syncingRef.current) return { failed: 0, stockErrors: 0 };
+    if (!navigator.onLine) return { failed: 0, stockErrors: 0 };
 
     const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
 
     if (!queue.length) {
-      setPendingSyncCount(0);
-      return;
+      void refreshPendingSyncCount();
+      return { failed: 0, stockErrors: 0 };
     }
 
     syncingRef.current = true;
@@ -332,6 +361,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
     try {
       const failed: OfflineSale[] = [];
+      let stockErrors = 0;
 
       for (const sale of queue) {
         try {
@@ -391,7 +421,12 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           );
           if (itemsErr) throw itemsErr;
 
-          await decrementStockForItems(saleItems);
+          try {
+            await decrementStockForItems(saleItems);
+          } catch (e) {
+            stockErrors += 1;
+            console.error("Stock decrement failed during offline sale sync", e);
+          }
           await queryClient.invalidateQueries({ queryKey: ["products"] });
         } catch (e: any) {
           failed.push({ ...sale, lastError: errorToMessage(e) });
@@ -403,15 +438,20 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       if (failed.length) {
         setSyncStatus("error");
         if (!silent) toast.error(`${failed.length} sales failed to sync`);
+      } else if (stockErrors > 0) {
+        setSyncStatus("error");
+        if (!silent) toast.warning(`Synced sales, but ${stockErrors} stock updates failed`);
       } else {
         setSyncStatus("online");
         if (!silent) toast.success("All offline sales synced");
       }
+
+      return { failed: failed.length, stockErrors };
     } finally {
       if (toastId != null) toast.dismiss(toastId);
       syncingRef.current = false;
     }
-  }, [queryClient]);
+  }, [queryClient, refreshPendingSyncCount]);
 
   const runGlobalSync = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -426,9 +466,24 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       let anyFailed = false;
 
       try {
+        const sessionRes = await ensureSupabaseSession();
+        if (!sessionRes.ok) {
+          anyFailed = true;
+          annotateSalesQueueError(sessionRes.error);
+
+          const now = Date.now();
+          const showToast = !silent || now - lastCloudAuthNoticeRef.current > 5 * 60_000;
+          if (showToast) {
+            lastCloudAuthNoticeRef.current = now;
+            toast.error(`Cloud session required to sync. ${sessionRes.error}`);
+          }
+          return;
+        }
+
         // Sales
         try {
-          await processOfflineQueue({ silent });
+          const salesRes = await processOfflineQueue({ silent });
+          if (salesRes.stockErrors > 0) anyFailed = true;
         } catch {
           anyFailed = true;
         }
@@ -467,7 +522,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         else setSyncStatus("online");
       }
     },
-    [globalSyncingRef, processOfflineQueue, queryClient, refreshPendingSyncCount]
+    [currentUser, processOfflineQueue, queryClient, refreshPendingSyncCount]
   );
 
   /* ---------------------------- ONLINE / OFFLINE ---------------------------- */
@@ -670,11 +725,11 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   /* ------------------------------ COMPLETE SALE ----------------------------- */
 
-  const persistSale = async (args: {
-    cashierId: string;
-    customerName: string;
-    total: number;
-    payments: Payment[];
+    const persistSale = async (args: {
+      cashierId: string;
+      customerName: string;
+      total: number;
+      payments: Payment[];
     items: CartItem[];
     meta: SaleMeta;
     saleType: SaleType;
@@ -691,13 +746,20 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       saleType: args.saleType,
       bookingId: args.bookingId ?? null,
       synced: false,
-    };
+      };
 
-    if (navigator.onLine) {
-      try {
-        const { data: order, error: orderErr } = await supabase
-          .from("orders")
-          .insert({
+      if (navigator.onLine) {
+        const sessionRes = await ensureSupabaseSession();
+        if (!sessionRes.ok) {
+          saveToOfflineQueue({ ...saleData, lastError: sessionRes.error });
+          toast.warning("Cloud session required — saved offline");
+          return;
+        }
+
+        try {
+          const { data: order, error: orderErr } = await supabase
+            .from("orders")
+            .insert({
             cashier_id: saleData.cashierId,
             customer_name: saleData.customerName,
             total_amount: saleData.total,
@@ -726,19 +788,26 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           }))
         );
 
-        if (itemsErr) throw itemsErr;
+          if (itemsErr) throw itemsErr;
 
-        await decrementStockForItems(saleItems);
+        let stockOk = true;
+        try {
+          await decrementStockForItems(saleItems);
+        } catch (e) {
+          stockOk = false;
+          console.error("Stock decrement failed after saving order/items", e);
+        }
         await queryClient.invalidateQueries({ queryKey: ["products"] });
 
-        toast.success("Sale saved & synced");
+        if (stockOk) toast.success("Sale saved & synced");
+        else toast.warning("Sale saved, but stock update failed");
         return;
       } catch (e: any) {
         saveToOfflineQueue({ ...saleData, lastError: errorToMessage(e) });
         toast.warning("Online save failed — saved offline");
-        return;
+          return;
+        }
       }
-    }
 
     saveToOfflineQueue(saleData);
     toast.success("Saved offline");

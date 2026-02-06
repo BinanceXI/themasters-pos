@@ -149,13 +149,32 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
           const cp = String((creds as any)?.password || "");
 
           if (cu && cp && cu === local.username) {
-            const verify = await callVerifyPassword(cu, cp);
-            if (verify.ok) {
-              const { error: otpErr } = await supabase.auth.verifyOtp({
-                token_hash: verify.token_hash,
-                type: "magiclink",
-              });
-              if (otpErr) throw otpErr;
+            // Prefer offline-password edge verification (no email required). Fallback to Supabase password sign-in
+            // for older accounts or when edge functions are temporarily unavailable.
+            let cloudOk = false;
+
+            try {
+              const verify = await callVerifyPassword(cu, cp);
+              if (verify.ok) {
+                const { error: otpErr } = await supabase.auth.verifyOtp({
+                  token_hash: verify.token_hash,
+                  type: "magiclink",
+                });
+                if (otpErr) throw otpErr;
+                cloudOk = true;
+              }
+            } catch {
+              // ignore (fallback below)
+            }
+
+            if (!cloudOk) {
+              try {
+                const email = cu.includes("@") ? cu : `${cu}@themasterspos.app`;
+                const { error: signErr } = await supabase.auth.signInWithPassword({ email, password: cp });
+                if (signErr) throw signErr;
+              } catch {
+                // keep offline login working even if cloud session can't be restored
+              }
             }
           }
         } catch {
@@ -208,29 +227,44 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         } as any);
 
         sessionStorage.setItem("themasters_session_active", "1");
-      localStorage.setItem("themasters_last_username", localUser.username);
+        localStorage.setItem("themasters_last_username", localUser.username);
 
-      // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
-      if (navigator.onLine) {
-        try {
-          const verify = await callVerifyPassword(u, password);
-          if (!verify.ok) throw new Error(verify.error || "Cloud session unavailable");
+        // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
+        if (navigator.onLine) {
+          let cloudOk = false;
+          try {
+            const verify = await callVerifyPassword(u, password);
+            if (!verify.ok) throw new Error(verify.error || "Cloud session unavailable");
 
-          const { error: otpErr } = await supabase.auth.verifyOtp({
-            token_hash: verify.token_hash,
-            type: "magiclink",
-          });
-          if (otpErr) throw otpErr;
-        } catch (e: any) {
-          toast.warning(e?.message || "Signed in offline; cloud session unavailable");
+            const { error: otpErr } = await supabase.auth.verifyOtp({
+              token_hash: verify.token_hash,
+              type: "magiclink",
+            });
+            if (otpErr) throw otpErr;
+            cloudOk = true;
+          } catch (e: any) {
+            // Fallback: accounts that use Supabase Auth passwords.
+            try {
+              const email = u.includes("@") ? u : `${u}@themasterspos.app`;
+              const { error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+              if (signErr) throw signErr;
+              cloudOk = true;
+            } catch (e2: any) {
+              const msg = e2?.message || e?.message || "Signed in offline; cloud session unavailable";
+              toast.warning(msg);
+            }
+          }
+
+          if (!cloudOk) {
+            // keep offline login working even if cloud session can't be restored
+          }
         }
-      }
 
-      void maybeSaveBiometricCredentials(u, password);
-      toast.success(`Welcome ${localUser.full_name || localUser.username}`);
-      onLogin();
-      return;
-    }
+        void maybeSaveBiometricCredentials(u, password);
+        toast.success(`Welcome ${localUser.full_name || localUser.username}`);
+        onLogin();
+        return;
+      }
 
       // 2) No local user yet:
       if (!navigator.onLine) {

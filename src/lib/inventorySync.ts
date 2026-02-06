@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
+import { ensureSupabaseSession } from "@/lib/supabaseSession";
 
 export const PRODUCTS_QUEUE_KEY = "themasters_products_mutation_queue_v2";
 
@@ -72,6 +73,12 @@ export async function processInventoryQueue(opts?: { silent?: boolean; queryClie
 
   const queue = readInventoryQueue();
   if (!queue.length) return { processed: 0, failed: 0 };
+
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) {
+    if (!silent) toast.error(`Cannot sync inventory. ${sessionRes.error}`);
+    return { processed: 0, failed: queue.length };
+  }
 
   const toastId = silent ? null : toast.loading(`Syncing ${queue.length} inventory changes...`);
   const failed: InventoryOfflineMutation[] = [];

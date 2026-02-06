@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { ensureSupabaseSession } from "@/lib/supabaseSession";
 
 export type ExpenseType = "expense" | "owner_draw";
 
@@ -391,6 +392,9 @@ export function getExpenseQueueCount(): number {
 
 export async function syncExpenses(): Promise<void> {
   if (!navigator.onLine) return;
+
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) throw new Error(`Cloud session required to sync expenses. ${sessionRes.error}`);
 
   const queue = await listQueueLocal();
   if (!queue.length) {

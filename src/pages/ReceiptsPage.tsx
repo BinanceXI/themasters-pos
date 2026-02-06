@@ -55,6 +55,11 @@ function safeJSONParse<T>(raw: string | null, fallback: T): T {
 
 function writeOfflineQueue(queue: any[]) {
   localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue || []));
+  try {
+    window.dispatchEvent(new Event("themasters:queue_changed"));
+  } catch {
+    // ignore
+  }
 }
 
 // --------------------
@@ -349,10 +354,25 @@ const testThermalPrint = async () => {
   // --------------------
   // 4) Offline pending receipts
   // --------------------
-  const offlineQueue = useMemo(() => {
+  const readOfflineQueue = useCallback(() => {
     const queue = safeJSONParse<any[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
     return (queue || []).slice().reverse();
-  }, [activeTab, isOnline]);
+  }, []);
+
+  const [offlineQueue, setOfflineQueue] = useState<any[]>(() => readOfflineQueue());
+
+  useEffect(() => {
+    if (activeTab !== "receipts") return;
+    const refresh = () => setOfflineQueue(readOfflineQueue());
+    refresh();
+
+    window.addEventListener("themasters:queue_changed", refresh as any);
+    window.addEventListener("storage", refresh as any);
+    return () => {
+      window.removeEventListener("themasters:queue_changed", refresh as any);
+      window.removeEventListener("storage", refresh as any);
+    };
+  }, [activeTab, isOnline, readOfflineQueue]);
 
   const pendingCount = offlineQueue.length;
 
@@ -823,6 +843,11 @@ const testThermalPrint = async () => {
                               {sale.customerName ? `Customer: ${sale.customerName}` : "Walk-in"} • {t ? t.toLocaleString() : "Unknown time"}
                             </div>
                             <div className="text-xs text-slate-200/70 font-mono break-all mt-1">receipt_id: {rid}</div>
+                            {sale?.lastError && (
+                              <div className="text-[11px] text-amber-200/80 mt-1 break-words">
+                                Last error: {String(sale.lastError)}
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex gap-2 flex-wrap">

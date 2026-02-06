@@ -168,7 +168,7 @@ export const TopBar = () => {
               : syncStatus === "syncing"
               ? "Uploading offline sales…"
               : syncStatus === "error"
-              ? "Sync failed — retry when network is stable."
+              ? "Sync issue — check network or sign in again."
               : "Synced."}
           </div>
         </div>

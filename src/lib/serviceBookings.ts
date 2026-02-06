@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { ensureSupabaseSession } from "@/lib/supabaseSession";
 
 export type ServiceBookingStatus = "booked" | "completed" | "cancelled";
 
@@ -227,6 +228,22 @@ export async function pushUnsyncedServiceBookings(): Promise<{ pushed: number; f
   const unsynced = all.filter((b) => !b.synced);
   if (!unsynced.length) return { pushed: 0, failed: 0 };
 
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) {
+    const msg = sessionRes.error || "No active session";
+    await Promise.all(
+      unsynced.map((b) =>
+        upsertLocalServiceBooking({
+          ...b,
+          synced: false,
+          lastError: msg,
+          updated_at: b.updated_at || new Date().toISOString(),
+        })
+      )
+    );
+    return { pushed: 0, failed: unsynced.length };
+  }
+
   const rows = unsynced.map(toRemoteRow);
 
   const { data, error } = await supabase
@@ -280,6 +297,9 @@ export async function getUnsyncedServiceBookingsCount(): Promise<number> {
 
 export async function pullRecentServiceBookings(daysBack = 30): Promise<{ pulled: number }> {
   if (!navigator.onLine) return { pulled: 0 };
+
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) return { pulled: 0 };
 
   const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
