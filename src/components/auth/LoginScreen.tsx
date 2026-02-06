@@ -254,10 +254,6 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
               toast.warning(msg);
             }
           }
-
-          if (!cloudOk) {
-            // keep offline login working even if cloud session can't be restored
-          }
         }
 
         void maybeSaveBiometricCredentials(u, password);
