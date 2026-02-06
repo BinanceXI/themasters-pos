@@ -65,12 +65,11 @@ export async function callVerifyPassword(username: string, password: string): Pr
 
   if (!url || !anonKey) return { ok: false, error: "Supabase env missing" };
 
-  // In DEV, call via Vite proxy to avoid browser CORS preflight issues.
-  const endpoint = import.meta.env.DEV ? "/functions/v1/verify_password" : `${url}/functions/v1/verify_password`;
+  const proxyEndpoint = "/functions/v1/verify_password";
+  const directEndpoint = `${url.replace(/\/+$/, "")}/functions/v1/verify_password`;
 
-  let res: Response;
-  try {
-    res = await fetch(endpoint, {
+  const doFetch = async (endpoint: string) => {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: {
         apikey: anonKey,
@@ -79,11 +78,48 @@ export async function callVerifyPassword(username: string, password: string): Pr
       },
       body: JSON.stringify({ username, password }),
     });
+
+    const data = (await res.json().catch(() => ({}))) as any;
+    return { res, data };
+  };
+
+  try {
+    // Prefer the Vite proxy in DEV (avoids CORS issues), but fall back to direct URL when proxy isn't configured.
+    const first = import.meta.env.DEV ? proxyEndpoint : directEndpoint;
+    const second = import.meta.env.DEV ? directEndpoint : null;
+
+    let out: { res: Response; data: any };
+    try {
+      out = await doFetch(first);
+    } catch (e) {
+      if (!second) throw e;
+      out = await doFetch(second);
+    }
+
+    // If the proxy is up but the function isn't found (common when proxy isn't configured),
+    // retry against the direct Supabase URL.
+    if (second && !out.res.ok && out.res.status === 404) {
+      try {
+        out = await doFetch(second);
+      } catch {
+        // keep the first failure
+      }
+    }
+
+    const { res, data } = out;
+
+    if (!res.ok) {
+      const base = String(data?.error || `HTTP ${res.status}`);
+      const hint =
+        res.status === 404
+          ? "verify_password edge function not found (deploy it in Supabase)."
+          : "";
+      const merged = hint ? `${base} — ${hint}` : base;
+      return { ok: false, error: merged, details: data?.details };
+    }
+
+    return data as VerifyPasswordResponse;
   } catch (e: any) {
     return { ok: false, error: e?.message || "Failed to fetch" };
   }
-
-  const data = (await res.json().catch(() => ({}))) as any;
-  if (!res.ok) return { ok: false, error: String(data?.error || `HTTP ${res.status}`), details: data?.details };
-  return data as VerifyPasswordResponse;
 }

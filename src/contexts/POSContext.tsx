@@ -466,18 +466,23 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       let anyFailed = false;
 
       try {
-        const sessionRes = await ensureSupabaseSession();
-        if (!sessionRes.ok) {
-          anyFailed = true;
-          annotateSalesQueueError(sessionRes.error);
+        const countsBefore = await refreshPendingSyncCount();
+        const hasPendingWork = countsBefore.total > 0;
 
-          const now = Date.now();
-          const showToast = !silent || now - lastCloudAuthNoticeRef.current > 5 * 60_000;
-          if (showToast) {
-            lastCloudAuthNoticeRef.current = now;
-            toast.error(`Cloud session required to sync. ${sessionRes.error}`);
+        if (hasPendingWork) {
+          const sessionRes = await ensureSupabaseSession();
+          if (!sessionRes.ok) {
+            anyFailed = true;
+            annotateSalesQueueError(sessionRes.error);
+
+            const now = Date.now();
+            const showToast = !silent || now - lastCloudAuthNoticeRef.current > 5 * 60_000;
+            if (showToast) {
+              lastCloudAuthNoticeRef.current = now;
+              toast.error(`Cloud session required to sync. ${sessionRes.error}`);
+            }
+            return;
           }
-          return;
         }
 
         // Sales
@@ -725,11 +730,11 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   /* ------------------------------ COMPLETE SALE ----------------------------- */
 
-    const persistSale = async (args: {
-      cashierId: string;
-      customerName: string;
-      total: number;
-      payments: Payment[];
+  const persistSale = async (args: {
+    cashierId: string;
+    customerName: string;
+    total: number;
+    payments: Payment[];
     items: CartItem[];
     meta: SaleMeta;
     saleType: SaleType;
@@ -746,20 +751,13 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       saleType: args.saleType,
       bookingId: args.bookingId ?? null,
       synced: false,
-      };
+    };
 
-      if (navigator.onLine) {
-        const sessionRes = await ensureSupabaseSession();
-        if (!sessionRes.ok) {
-          saveToOfflineQueue({ ...saleData, lastError: sessionRes.error });
-          toast.warning("Cloud session required — saved offline");
-          return;
-        }
-
-        try {
-          const { data: order, error: orderErr } = await supabase
-            .from("orders")
-            .insert({
+    if (navigator.onLine) {
+      const insertOnline = async () => {
+        const { data: order, error: orderErr } = await supabase
+          .from("orders")
+          .insert({
             cashier_id: saleData.cashierId,
             customer_name: saleData.customerName,
             total_amount: saleData.total,
@@ -788,7 +786,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           }))
         );
 
-          if (itemsErr) throw itemsErr;
+        if (itemsErr) throw itemsErr;
 
         let stockOk = true;
         try {
@@ -797,17 +795,43 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           stockOk = false;
           console.error("Stock decrement failed after saving order/items", e);
         }
-        await queryClient.invalidateQueries({ queryKey: ["products"] });
 
-        if (stockOk) toast.success("Sale saved & synced");
+        await queryClient.invalidateQueries({ queryKey: ["products"] });
+        return { stockOk };
+      };
+
+      try {
+        const res = await insertOnline();
+        if (res.stockOk) toast.success("Sale saved & synced");
         else toast.warning("Sale saved, but stock update failed");
         return;
       } catch (e: any) {
-        saveToOfflineQueue({ ...saleData, lastError: errorToMessage(e) });
-        toast.warning("Online save failed — saved offline");
-          return;
+        let msg = errorToMessage(e);
+
+        // If we failed due to missing/expired auth, refresh session and retry once.
+        try {
+          const sessionRes = await ensureSupabaseSession();
+          if (sessionRes.ok) {
+            try {
+              const res = await insertOnline();
+              if (res.stockOk) toast.success("Sale saved & synced");
+              else toast.warning("Sale saved, but stock update failed");
+              return;
+            } catch (e2: any) {
+              msg = errorToMessage(e2);
+            }
+          } else {
+            msg = sessionRes.error || msg;
+          }
+        } catch {
+          // ignore
         }
+
+        saveToOfflineQueue({ ...saleData, lastError: msg });
+        toast.warning("Online save failed — saved offline");
+        return;
       }
+    }
 
     saveToOfflineQueue(saleData);
     toast.success("Saved offline");

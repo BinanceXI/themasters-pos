@@ -393,15 +393,19 @@ export function getExpenseQueueCount(): number {
 export async function syncExpenses(): Promise<void> {
   if (!navigator.onLine) return;
 
-  const sessionRes = await ensureSupabaseSession();
-  if (!sessionRes.ok) throw new Error(`Cloud session required to sync expenses. ${sessionRes.error}`);
-
   const queue = await listQueueLocal();
   if (!queue.length) {
     // Best-effort pull so new devices get data when online
-    await pullRecentExpenses(90);
+    try {
+      await pullRecentExpenses(90);
+    } catch {
+      // pull failures shouldn't block the rest of the app
+    }
     return;
   }
+
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) throw new Error(`Cloud session required to sync expenses. ${sessionRes.error}`);
 
   for (const item of queue.sort((a, b) => (a.ts || 0) - (b.ts || 0))) {
     try {
@@ -430,7 +434,11 @@ export async function syncExpenses(): Promise<void> {
   }
 
   // Best-effort pull after pushing
-  await pullRecentExpenses(90);
+  try {
+    await pullRecentExpenses(90);
+  } catch {
+    // ignore
+  }
 }
 
 async function pullRecentExpenses(daysBack: number): Promise<void> {
