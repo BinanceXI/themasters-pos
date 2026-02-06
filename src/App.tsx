@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 
 import { Toaster } from "@/components/ui/toaster";
@@ -24,8 +24,6 @@ import { ProfitAnalysisPage } from "./pages/ProfitAnalysisPage";
 import { ExpensesPage } from "./pages/ExpensesPage";
 import NotFound from "./pages/NotFound";
 
-const SESSION_KEY = "themasters_session_active";
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -44,30 +42,7 @@ const persister = createSyncStoragePersister({
 });
 
 const AppRoutes = () => {
-  const { currentUser, setCurrentUser } = usePOS();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-
-  useEffect(() => {
-  const lockSession = () => {
-    sessionStorage.removeItem(SESSION_KEY);
-    setIsAuthenticated(false);
-    setCurrentUser(null as any); // ✅ THIS is the real lock
-  };
-
-  const onVisibility = () => {
-    if (document.hidden) lockSession();
-  };
-
-  window.addEventListener("beforeunload", lockSession);
-  document.addEventListener("visibilitychange", onVisibility);
-
-  return () => {
-    window.removeEventListener("beforeunload", lockSession);
-    document.removeEventListener("visibilitychange", onVisibility);
-  };
-}, [setCurrentUser]);
-
-  const handleLogin = () => setIsAuthenticated(true);
+  const { currentUser } = usePOS();
 
   return (
     <Routes>
@@ -75,8 +50,8 @@ const AppRoutes = () => {
       <Route path="/verify/:id" element={<VerifyReceiptPage />} />
 
       {/* ✅ Auth gate */}
-      {!isAuthenticated ? (
-        <Route path="*" element={<LoginScreen onLogin={handleLogin} />} />
+      {!currentUser ? (
+        <Route path="*" element={<LoginScreen onLogin={() => {}} />} />
       ) : (
         <>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />

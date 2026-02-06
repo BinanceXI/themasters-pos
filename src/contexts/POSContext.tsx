@@ -213,7 +213,16 @@ const decrementStockForItems = async (items: CartItem[]) => {
 export const POSProvider = ({ children }: { children: ReactNode }) => {
   const queryClient = useQueryClient();
 
-  const [currentUser, _setCurrentUser] = useState<POSUser | null>(null);
+  const [currentUser, _setCurrentUser] = useState<POSUser | null>(() => {
+    const saved = localStorage.getItem(USER_KEY);
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as POSUser;
+    } catch {
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
+  });
   const [cart, setCart] = useState<CartItem[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("online");
 
@@ -228,16 +237,6 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
   const syncingRef = useRef(false);
 
   /* --------------------------- SESSION PERSISTENCE -------------------------- */
-
-  useEffect(() => {
-    const saved = localStorage.getItem(USER_KEY);
-    if (!saved) return;
-    try {
-      _setCurrentUser(JSON.parse(saved));
-    } catch {
-      localStorage.removeItem(USER_KEY);
-    }
-  }, []);
 
   const setCurrentUser = (user: POSUser | null) => {
     _setCurrentUser(user);
@@ -284,8 +283,10 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   /* ------------------------------ OFFLINE SYNC ------------------------------ */
 
-  const processOfflineQueue = useCallback(async () => {
+  const processOfflineQueue = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = !!opts?.silent;
     if (syncingRef.current) return;
+    if (!navigator.onLine) return;
 
     const queue = safeJSONParse<OfflineSale[]>(localStorage.getItem(OFFLINE_QUEUE_KEY), []);
 
@@ -296,84 +297,89 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
     syncingRef.current = true;
     setSyncStatus("syncing");
-    toast.loading(`Syncing ${queue.length} offline sales...`);
+    const toastId = silent ? null : toast.loading(`Syncing ${queue.length} offline sales...`);
 
-    const failed: OfflineSale[] = [];
+    try {
+      const failed: OfflineSale[] = [];
 
-    for (const sale of queue) {
-      try {
-        const saleItems = ensureLineIds(sale.items || []);
-        const saleTime = new Date(sale.meta.timestamp);
-        const saleType: SaleType =
-          (sale as any).saleType || (sale.meta as any)?.saleType || deriveSaleType(saleItems, "product");
-        const bookingId: string | null =
-          (sale as any).bookingId ?? (sale.meta as any)?.bookingId ?? null;
+      for (const sale of queue) {
+        try {
+          const saleItems = ensureLineIds(sale.items || []);
+          const saleTime = new Date(sale.meta.timestamp);
+          const saleType: SaleType =
+            (sale as any).saleType || (sale.meta as any)?.saleType || deriveSaleType(saleItems, "product");
+          const bookingId: string | null =
+            (sale as any).bookingId ?? (sale.meta as any)?.bookingId ?? null;
 
-        let orderId: string | null = null;
+          let orderId: string | null = null;
 
-        const { data: existing } = await supabase
-          .from("orders")
-          .select("id")
-          .eq("receipt_id", sale.meta.receiptId)
-          .maybeSingle();
-
-        if (existing?.id) {
-          orderId = existing.id;
-        } else {
-          const { data, error } = await supabase
+          const { data: existing, error: existingErr } = await supabase
             .from("orders")
-            .insert({
-              cashier_id: sale.cashierId,
-              customer_name: sale.customerName,
-              total_amount: sale.total,
-              payment_method: sale.payments[0]?.method || "cash",
-              status: "completed",
-              created_at: saleTime,
-              receipt_id: sale.meta.receiptId,
-              receipt_number: sale.meta.receiptNumber,
-              sale_type: saleType,
-              booking_id: bookingId,
-            })
             .select("id")
-            .single();
+            .eq("receipt_id", sale.meta.receiptId)
+            .maybeSingle();
+          if (existingErr) throw existingErr;
 
-          if (error) throw error;
-          orderId = data.id;
+          if (existing?.id) {
+            orderId = existing.id;
+          } else {
+            const { data, error } = await supabase
+              .from("orders")
+              .insert({
+                cashier_id: sale.cashierId,
+                customer_name: sale.customerName,
+                total_amount: sale.total,
+                payment_method: sale.payments[0]?.method || "cash",
+                status: "completed",
+                created_at: saleTime,
+                receipt_id: sale.meta.receiptId,
+                receipt_number: sale.meta.receiptNumber,
+                sale_type: saleType,
+                booking_id: bookingId,
+              })
+              .select("id")
+              .single();
+
+            if (error) throw error;
+            orderId = data.id;
+          }
+
+          const { error: delErr } = await supabase.from("order_items").delete().eq("order_id", orderId);
+          if (delErr) throw delErr;
+
+          const { error: itemsErr } = await supabase.from("order_items").insert(
+            saleItems.map((i) => ({
+              order_id: orderId,
+              product_id: i.product.id,
+              product_name: i.product.name,
+              quantity: Number(i.quantity),
+              price_at_sale: (i as any).customPrice ?? i.product.price,
+              cost_at_sale: (i.product as any).cost_price || 0,
+              service_note: (i as any).customDescription || null,
+            }))
+          );
+          if (itemsErr) throw itemsErr;
+
+          await decrementStockForItems(saleItems);
+          await queryClient.invalidateQueries({ queryKey: ["products"] });
+        } catch (e: any) {
+          failed.push({ ...sale, lastError: errorToMessage(e) });
         }
-
-        await supabase.from("order_items").delete().eq("order_id", orderId);
-
-        await supabase.from("order_items").insert(
-          saleItems.map((i) => ({
-            order_id: orderId,
-            product_id: i.product.id,
-            product_name: i.product.name,
-            quantity: Number(i.quantity),
-            price_at_sale: (i as any).customPrice ?? i.product.price,
-            cost_at_sale: (i.product as any).cost_price || 0,
-            service_note: (i as any).customDescription || null,
-          }))
-        );
-
-        await decrementStockForItems(saleItems);
-        await queryClient.invalidateQueries({ queryKey: ["products"] });
-      } catch (e: any) {
-        failed.push({ ...sale, lastError: errorToMessage(e) });
       }
+
+      writeQueue(failed);
+
+      if (failed.length) {
+        setSyncStatus("error");
+        if (!silent) toast.error(`${failed.length} sales failed to sync`);
+      } else {
+        setSyncStatus("online");
+        if (!silent) toast.success("All offline sales synced");
+      }
+    } finally {
+      if (toastId != null) toast.dismiss(toastId);
+      syncingRef.current = false;
     }
-
-    writeQueue(failed);
-    toast.dismiss();
-
-    if (failed.length) {
-      setSyncStatus("error");
-      toast.error(`${failed.length} sales failed to sync`);
-    } else {
-      setSyncStatus("online");
-      toast.success("All offline sales synced");
-    }
-
-    syncingRef.current = false;
   }, [queryClient]);
 
   /* ---------------------------- ONLINE / OFFLINE ---------------------------- */
@@ -394,6 +400,16 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       window.removeEventListener("offline", update);
     };
   }, [processOfflineQueue]);
+
+  // Background auto-retry (helps Capacitor where "online" events can be flaky).
+  useEffect(() => {
+    if (pendingSyncCount <= 0) return;
+    const t = setInterval(() => {
+      if (!navigator.onLine) return;
+      processOfflineQueue({ silent: true });
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [pendingSyncCount, processOfflineQueue]);
 
   /* ------------------------------- CART LOGIC ------------------------------- */
 

@@ -13,7 +13,7 @@ import {
   verifyPasswordLocal,
 } from "@/lib/auth/offlinePasswordAuth";
 import { hashPassword } from "@/lib/auth/passwordKdf";
-import { listLocalUsers, upsertLocalUser } from "@/lib/auth/localUserStore";
+import { getLocalUser, listLocalUsers, upsertLocalUser } from "@/lib/auth/localUserStore";
 import { toast } from "sonner";
 import themastersLogo from "@/assets/themasters-logo.png";
 import { Capacitor } from "@capacitor/core";
@@ -70,7 +70,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
     })();
   }, []);
 
-  // ✅ Fingerprint unlock: requires an existing Supabase auth session (online setup)
+  // ✅ Fingerprint unlock: offline-first (unlocks the local user on this device).
   const handleFingerprintLogin = async () => {
     if (!Capacitor.isNativePlatform()) {
       toast.error("Fingerprint works only on Android app");
@@ -91,45 +91,36 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         description: "Scan your fingerprint",
       });
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData?.session?.access_token) {
-        toast.error("No active session. Please sign in with your password.");
+      const last =
+        sanitizeUsername(localStorage.getItem("themasters_last_username") || "") || sanitizeUsername(username);
+      if (!last) {
+        toast.error("No saved user on this device. Sign in with your password once.");
         return;
       }
 
-      const { data: userData, error: userErr } = await supabase.auth.getUser();
-      if (userErr || !userData?.user) {
-        toast.error("Session expired. Please sign in with your password.");
+      const local = await getLocalUser(last);
+      if (!local) {
+        toast.error("Offline login not set up on this device. Sign in with your password once.");
         return;
       }
-
-      const { data: profile, error: profErr } = await supabase
-        .from("profiles")
-        .select("id, username, full_name, role, permissions, active")
-        .eq("id", userData.user.id)
-        .maybeSingle();
-
-      if (profErr || !profile) {
-        toast.error("Failed to load profile");
-        return;
-      }
-      if ((profile as any)?.active === false) {
+      if (local.active === false) {
         toast.error("Account disabled");
         return;
       }
 
       setCurrentUser({
-        id: String((profile as any).id),
-        full_name: (profile as any).full_name || (profile as any).username,
-        name: (profile as any).full_name || (profile as any).username,
-        username: (profile as any).username,
-        role: (profile as any).role || "cashier",
-        permissions: (profile as any).permissions || {},
+        id: local.id,
+        full_name: local.full_name || local.username,
+        name: local.full_name || local.username,
+        username: local.username,
+        role: (local.role as any) || "cashier",
+        permissions: local.permissions || {},
         active: true,
       } as any);
 
       sessionStorage.setItem("themasters_session_active", "1");
-      toast.success(`Welcome ${(profile as any).full_name || (profile as any).username}`);
+      localStorage.setItem("themasters_last_username", local.username);
+      toast.success(`Welcome ${local.full_name || local.username}`);
       onLogin();
     } catch (err: any) {
       toast.error(err?.message || "Fingerprint cancelled / failed");
