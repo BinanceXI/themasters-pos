@@ -207,13 +207,16 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
     setLoading(true);
 
     try {
-      const u = sanitizeUsername(username);
+      const identifierRaw = String(username || "").trim();
+      const identifier = identifierRaw.toLowerCase();
+      const isEmail = identifier.includes("@");
+      const u = sanitizeUsername(identifier);
       const password = String(secret || "");
 
-      if (!u || !password) throw new Error("Enter username and password");
+      if (!identifier || !password) throw new Error("Enter username and password");
 
       // 1) OFFLINE-FIRST: try local password verification
-      const localUser = await verifyPasswordLocal(u, password);
+      const localUser = isEmail ? null : await verifyPasswordLocal(u, password);
 
       if (localUser) {
         setCurrentUser({
@@ -231,24 +234,24 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
 
         // 2) If online, best-effort: mint/refresh Supabase session for sync + RLS.
         if (navigator.onLine) {
-          let cloudOk = false;
           try {
-            const verify = await callVerifyPassword(u, password);
-            if (!verify.ok) throw new Error(verify.error || "Cloud session unavailable");
-
-            const { error: otpErr } = await supabase.auth.verifyOtp({
-              token_hash: verify.token_hash,
-              type: "magiclink",
-            });
-            if (otpErr) throw otpErr;
-            cloudOk = true;
+            // Prefer standard Supabase Auth password sign-in when possible (doesn't require Edge Functions).
+            const email = localUser.username.includes("@")
+              ? localUser.username
+              : `${localUser.username}@themasterspos.app`;
+            const { error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+            if (signErr) throw signErr;
           } catch (e: any) {
-            // Fallback: accounts that use Supabase Auth passwords.
+            // Fallback: offline-password edge verification (helps when the Auth email isn't the synthetic mapping).
             try {
-              const email = u.includes("@") ? u : `${u}@themasterspos.app`;
-              const { error: signErr } = await supabase.auth.signInWithPassword({ email, password });
-              if (signErr) throw signErr;
-              cloudOk = true;
+              const verify = await callVerifyPassword(localUser.username, password);
+              if (!verify.ok) throw new Error((verify as any).error || (verify as any).message || "Cloud session unavailable");
+
+              const { error: otpErr } = await supabase.auth.verifyOtp({
+                token_hash: verify.token_hash,
+                type: "magiclink",
+              });
+              if (otpErr) throw otpErr;
             } catch (e2: any) {
               const msg = e2?.message || e?.message || "Signed in offline; cloud session unavailable";
               toast.warning(msg);
@@ -256,7 +259,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
           }
         }
 
-        void maybeSaveBiometricCredentials(u, password);
+        void maybeSaveBiometricCredentials(localUser.username, password);
         toast.success(`Welcome ${localUser.full_name || localUser.username}`);
         onLogin();
         return;
@@ -271,9 +274,28 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       }
 
       // 3) Online sign-in (seed offline password hash locally)
-      // Prefer edge-function username/password verification (no email required).
-      const verify = await callVerifyPassword(u, password);
-      if (verify.ok) {
+      // Prefer direct Supabase Auth password sign-in (works when using the synthetic username@themasterspos.app email).
+      const email = isEmail ? identifier : `${u}@themasterspos.app`;
+      let signInUserId: string | null = null;
+      try {
+        const { data: signIn, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
+        if (signErr || !signIn?.user?.id) throw signErr || new Error("Invalid credentials");
+        signInUserId = signIn.user.id;
+      } catch (signInErr: any) {
+        // If the project uses non-synthetic Auth emails, try the edge-function username/password verification.
+        if (isEmail) throw signInErr;
+
+        const verify = await callVerifyPassword(u, password);
+        if (!verify.ok) {
+          const merged = String((verify as any).error || (verify as any).message || signInErr?.message || "Invalid credentials");
+          if (/cors|preflight|failed to fetch|err_failed/i.test(merged) && localUserCount === 0) {
+            throw new Error(
+              "Cannot reach server to verify credentials. Tap “Set up Offline Admin” to start offline."
+            );
+          }
+          throw new Error(merged);
+        }
+
         const { error: otpErr } = await supabase.auth.verifyOtp({
           token_hash: verify.token_hash,
           type: "magiclink",
@@ -295,29 +317,16 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
         sessionStorage.setItem("themasters_session_active", "1");
         localStorage.setItem("themasters_last_username", verify.user.username);
 
-        void maybeSaveBiometricCredentials(u, password);
+        void maybeSaveBiometricCredentials(verify.user.username, password);
         toast.success(`Welcome ${verify.user.full_name || verify.user.username}`);
         onLogin();
         return;
       }
 
-      // Fallback: direct Supabase Auth password sign-in (for accounts that already exist in Auth).
-      const email = u.includes("@") ? u : `${u}@themasterspos.app`;
-      const { data: signIn, error: signErr } = await supabase.auth.signInWithPassword({ email, password });
-
-      if (signErr || !signIn?.user?.id) {
-        const msg = verify.ok ? "" : String(verify.error || "");
-        const merged = msg || signErr?.message || "Invalid credentials";
-        if (/cors|preflight|failed to fetch|err_failed/i.test(merged) && localUserCount === 0) {
-          throw new Error("Cannot reach server to verify credentials. Tap “Set up Offline Admin” to start offline.");
-        }
-        throw new Error(merged);
-      }
-
       const { data: profile, error: profErr } = await supabase
         .from("profiles")
         .select("id, username, full_name, role, permissions, active")
-        .eq("id", signIn.user.id)
+        .eq("id", signInUserId)
         .maybeSingle();
 
       if (profErr || !profile) throw new Error("Failed to load profile");
@@ -338,7 +347,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       sessionStorage.setItem("themasters_session_active", "1");
       localStorage.setItem("themasters_last_username", String((profile as any).username || u));
 
-      void maybeSaveBiometricCredentials(u, password);
+      void maybeSaveBiometricCredentials(String((profile as any).username || u), password);
       toast.success(`Welcome ${(profile as any).full_name || (profile as any).username || u}`);
       onLogin();
     } catch (err: any) {

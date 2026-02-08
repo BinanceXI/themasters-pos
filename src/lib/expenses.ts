@@ -257,7 +257,7 @@ async function listExpensesLocal(): Promise<Expense[]> {
 
       const out: Expense[] = [];
       await new Promise<void>((resolve, reject) => {
-        const cursorReq = expenses.openCursor();
+        const cursorReq = (expenses as any).openCursor();
         cursorReq.onerror = () => reject(cursorReq.error || new Error("Cursor failed"));
         cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
@@ -324,7 +324,7 @@ async function listQueueLocal(): Promise<ExpenseQueueItem[]> {
 
       const out: ExpenseQueueItem[] = [];
       await new Promise<void>((resolve, reject) => {
-        const cursorReq = queue.openCursor();
+        const cursorReq = (queue as any).openCursor();
         cursorReq.onerror = () => reject(cursorReq.error || new Error("Cursor failed"));
         cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
@@ -405,7 +405,9 @@ export async function syncExpenses(): Promise<void> {
   }
 
   const sessionRes = await ensureSupabaseSession();
-  if (!sessionRes.ok) throw new Error(`Cloud session required to sync expenses. ${sessionRes.error}`);
+  if (!sessionRes.ok) {
+    // DO NOT throw — still attempt sync using anon role if allowed by RLS
+  }
 
   for (const item of queue.sort((a, b) => (a.ts || 0) - (b.ts || 0))) {
     try {
@@ -443,6 +445,9 @@ export async function syncExpenses(): Promise<void> {
 
 async function pullRecentExpenses(daysBack: number): Promise<void> {
   if (!navigator.onLine) return;
+
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) throw new Error(`Cloud session required to pull expenses. ${(sessionRes as any).error || (sessionRes as any).message || ""}`);
 
   const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   const queued = loadLsQueueMap();

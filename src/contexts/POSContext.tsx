@@ -186,11 +186,32 @@ const ensureLineIds = (items: any[]): CartItem[] =>
   }
 };
 
-const errorToMessage = (err: any) =>
-  err?.message ||
-  err?.error_description ||
-  err?.details ||
-  (typeof err === "string" ? err : JSON.stringify(err));
+const errorToMessage = (err: any) => {
+  if (!err) return "Unknown error";
+
+  // Supabase/PostgREST errors usually have: message, details, hint, code, status
+  const code = err?.code ? `code=${err.code}` : "";
+  const status = err?.status ? `status=${err.status}` : "";
+  const msg = err?.message || err?.error_description || "Request failed";
+  const details = err?.details ? `details=${String(err.details)}` : "";
+  const hint = err?.hint ? `hint=${String(err.hint)}` : "";
+
+  const parts = [msg, code, status, details, hint].filter(Boolean);
+  if (parts.length) return parts.join(" | ");
+
+  return typeof err === "string" ? err : JSON.stringify(err);
+};
+
+const isUuid = (s: any) =>
+  typeof s === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
+
+const ensureUuid = (raw: any) => {
+  const s = String(raw || "").trim();
+  if (isUuid(s)) return s;
+  // fallback for older devices / bad stored IDs
+  return (globalThis.crypto as any)?.randomUUID?.() || `rcpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
 
 const deriveSaleType = (items: CartItem[], fallback: SaleType = "product"): SaleType => {
   for (const it of items || []) {
@@ -367,45 +388,82 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         try {
           const saleItems = ensureLineIds(sale.items || []);
           const saleTime = new Date(sale.meta.timestamp);
-          const saleType: SaleType =
+          const rawSaleType =
             (sale as any).saleType || (sale.meta as any)?.saleType || deriveSaleType(saleItems, "product");
+
+          const saleType: SaleType = rawSaleType === "service" ? "service" : "product";
           const bookingId: string | null =
             (sale as any).bookingId ?? (sale.meta as any)?.bookingId ?? null;
 
           let orderId: string | null = null;
 
           const { data: existing, error: existingErr } = await supabase
-            .from("orders")
-            .select("id")
-            .eq("receipt_id", sale.meta.receiptId)
-            .maybeSingle();
+  .schema("public")
+  .from("orders")
+  .select("id")
+  .eq("receipt_id", sale.meta.receiptId)
+  .maybeSingle();
           if (existingErr) throw existingErr;
 
           if (existing?.id) {
             orderId = existing.id;
           } else {
+            const { data: authUserRes } = await supabase.auth.getUser();
+            const cashierId = authUserRes?.user?.id;
+
+            if (cashierId) {
+              const { error: profileUpsertErr } = await supabase
+                .schema("public")
+                .from("profiles")
+                .upsert({ id: cashierId })
+                .select("id")
+                .maybeSingle();
+
+              if (profileUpsertErr) {
+                console.error("[profiles upsert] error object:", profileUpsertErr);
+              }
+            }
+            const orderRow: any = {
+              cashier_id: String(cashierId || sale.cashierId),
+              total_amount: Number(sale.total) || 0,
+              payment_method: String(sale.payments?.[0]?.method || "cash"),
+              status: "completed",
+              created_at: new Date(saleTime).toISOString(),
+              receipt_id: String(sale.meta.receiptId),
+              receipt_number: String(sale.meta.receiptNumber),
+              sale_type: saleType === "service" ? "service" : "retail",
+            };
+
+            // Only send optional fields if they actually exist (avoid NOT NULL / type errors)
+            if (sale.customerName && String(sale.customerName).trim()) {
+              orderRow.customer_name = String(sale.customerName).trim();
+            }
+            if (bookingId && String(bookingId).trim()) {
+              orderRow.booking_id = String(bookingId).trim();
+            }
+
             const { data, error } = await supabase
+              .schema("public")
               .from("orders")
-              .insert({
-                cashier_id: sale.cashierId,
-                customer_name: sale.customerName,
-                total_amount: sale.total,
-                payment_method: sale.payments[0]?.method || "cash",
-                status: "completed",
-                created_at: saleTime,
-                receipt_id: sale.meta.receiptId,
-                receipt_number: sale.meta.receiptNumber,
-                sale_type: saleType,
-                booking_id: bookingId,
-              })
+              .insert(orderRow)
               .select("id")
               .single();
+              console.log("[orders insert] sale_type =", orderRow.sale_type);
 
-            if (error) throw error;
+            if (error) {
+              console.error("[orders insert] error object:", error);
+              console.error("[orders insert] orderRow payload:", orderRow);
+              throw error;
+            }
+
             orderId = data.id;
           }
 
-          const { error: delErr } = await supabase.from("order_items").delete().eq("order_id", orderId);
+          const { error: delErr } = await supabase
+  .schema("public")
+  .from("order_items")
+  .delete()
+  .eq("order_id", orderId);
           if (delErr) throw delErr;
 
           const { error: itemsErr } = await supabase.from("order_items").insert(
@@ -473,15 +531,14 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           const sessionRes = await ensureSupabaseSession();
           if (!sessionRes.ok) {
             anyFailed = true;
-            annotateSalesQueueError(sessionRes.error);
 
             const now = Date.now();
             const showToast = !silent || now - lastCloudAuthNoticeRef.current > 5 * 60_000;
             if (showToast) {
               lastCloudAuthNoticeRef.current = now;
-              toast.error(`Cloud session required to sync. ${sessionRes.error}`);
+              toast.error(`Sync issue — check network or sign in again.`);
             }
-            return;
+            // DO NOT return — still attempt sync using anon role if allowed by RLS
           }
         }
 
@@ -755,26 +812,57 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
     if (navigator.onLine) {
       const insertOnline = async () => {
+        const { data: authUserRes } = await supabase.auth.getUser();
+        const cashierId = authUserRes?.user?.id;
+
+        if (cashierId) {
+          const { error: profileUpsertErr } = await supabase
+            .schema("public")
+            .from("profiles")
+            .upsert({ id: cashierId })
+            .select("id")
+            .maybeSingle();
+
+          if (profileUpsertErr) {
+            console.error("[profiles upsert] error object:", profileUpsertErr);
+          }
+        }
+        const orderRow: any = {
+          cashier_id: String(cashierId || saleData.cashierId),
+          total_amount: Number(saleData.total) || 0,
+          payment_method: String(saleData.payments?.[0]?.method || "cash"),
+          status: "completed",
+          created_at: new Date(saleData.meta.timestamp).toISOString(),
+          receipt_id: String(saleData.meta.receiptId),
+          receipt_number: String(saleData.meta.receiptNumber),
+          sale_type: saleData.saleType === "service" ? "service" : "retail",
+        };
+
+        if (saleData.customerName && String(saleData.customerName).trim()) {
+          orderRow.customer_name = String(saleData.customerName).trim();
+        }
+        if (saleData.bookingId && String(saleData.bookingId).trim()) {
+          orderRow.booking_id = String(saleData.bookingId).trim();
+        }
+
         const { data: order, error: orderErr } = await supabase
+          .schema("public")
           .from("orders")
-          .insert({
-            cashier_id: saleData.cashierId,
-            customer_name: saleData.customerName,
-            total_amount: saleData.total,
-            payment_method: saleData.payments[0]?.method || "cash",
-            status: "completed",
-            created_at: new Date(saleData.meta.timestamp),
-            receipt_id: saleData.meta.receiptId,
-            receipt_number: saleData.meta.receiptNumber,
-            sale_type: saleData.saleType,
-            booking_id: saleData.bookingId ?? null,
-          })
+          .insert(orderRow)
           .select("id")
           .single();
+          console.log("[orders insert online] sale_type =", orderRow.sale_type);
 
-        if (orderErr) throw orderErr;
+        if (orderErr) {
+          console.error("[orders insert ONLINE] error object:", orderErr);
+          console.error("[orders insert ONLINE] orderRow payload:", orderRow);
+          throw orderErr;
+        }
 
-        const { error: itemsErr } = await supabase.from("order_items").insert(
+        const { error: itemsErr } = await supabase
+        .schema("public")
+        .from("order_items")
+        .insert(
           saleItems.map((i: any) => ({
             order_id: order.id,
             product_id: i.product.id,
@@ -821,7 +909,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
               msg = errorToMessage(e2);
             }
           } else {
-            msg = sessionRes.error || msg;
+            msg = (sessionRes as any).error || (sessionRes as any).message || msg;
           }
         } catch {
           // ignore
