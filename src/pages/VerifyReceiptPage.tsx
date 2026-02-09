@@ -32,6 +32,7 @@ type OrderRow = {
   payment_method: string | null;
   status: string | null;
   created_at: string;
+  cashier_id: string | null;
   order_items: OrderItem[];
   profiles?: { full_name: string | null } | null;
 };
@@ -85,24 +86,45 @@ export const VerifyReceiptPage = () => {
             payment_method,
             status,
             created_at,
+            cashier_id,
             order_items (
               product_name,
               quantity,
               price_at_sale
-            ),
-            profiles:cashier_id ( full_name )
+            )
           `
           )
           .eq("receipt_id", id)
           .maybeSingle();
 
-        if (ordErr || !data) {
+        if (ordErr) {
+          console.error("[verify receipt] orders query error:", ordErr);
+          setOrder(null);
+          setErrorMsg(ordErr.message || "query_error");
+          return;
+        }
+
+        if (!data) {
           setOrder(null);
           setErrorMsg("not_found");
           return;
         }
 
-        setOrder(data as any);
+        let cashierFullName: string | null = null;
+        if ((data as any).cashier_id) {
+          const { data: prof, error: profErr } = await supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("id", (data as any).cashier_id)
+            .maybeSingle();
+
+          if (!profErr) cashierFullName = (prof as any)?.full_name ?? null;
+        }
+
+        setOrder({
+          ...(data as any),
+          profiles: { full_name: cashierFullName },
+        } as any);
       } catch (e: any) {
         console.error(e);
         setOrder(null);
