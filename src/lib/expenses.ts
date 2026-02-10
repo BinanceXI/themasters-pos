@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { ensureSupabaseSession } from "@/lib/supabaseSession";
 
-export type ExpenseType = "expense" | "owner_draw";
+export type ExpenseType = "expense" | "owner_drawing";
 
 export type Expense = {
   id: string;
@@ -152,7 +152,7 @@ function normalizeExpense(raw: Expense): Expense {
   const now = new Date().toISOString();
   const expenseTypeRaw = (raw.expense_type || "expense") as any;
   const expenseType: ExpenseType =
-    expenseTypeRaw === "owner_drawing" ? "owner_draw" : (expenseTypeRaw as ExpenseType);
+  expenseTypeRaw === "owner_draw" ? "owner_drawing" : (expenseTypeRaw as ExpenseType);
   return {
     id: String(raw.id || "").trim(),
     created_at: raw.created_at || now,

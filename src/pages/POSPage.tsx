@@ -244,10 +244,11 @@ const [showMobileCart, setShowMobileCart] = useState(false);
     queryFn: async () => {
       // If you have is_archived in DB, hide archived so POS updates instantly after "delete"
       const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("is_archived", false)
-        .order("name");
+  .schema("public")
+  .from("products")
+  .select("*")
+  .eq("is_archived", false)
+  .order("name");
 
       if (error) throw error;
 

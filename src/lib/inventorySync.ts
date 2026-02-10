@@ -76,8 +76,8 @@ export async function processInventoryQueue(opts?: { silent?: boolean; queryClie
 
   const sessionRes = await ensureSupabaseSession();
   if (!sessionRes.ok) {
-    if (!silent) toast.error(`Cannot sync inventory. ${sessionRes.error}`);
-    return { processed: 0, failed: queue.length };
+    if (!silent) toast.error(`Sync issue — check network or sign in again.`);
+    // DO NOT return — still attempt sync using anon role if allowed by RLS
   }
 
   const toastId = silent ? null : toast.loading(`Syncing ${queue.length} inventory changes...`);

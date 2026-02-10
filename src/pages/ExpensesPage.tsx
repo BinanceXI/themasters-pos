@@ -66,6 +66,9 @@ function formatLocal(iso: string) {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
 }
+function isOwnerDrawing(t: any) {
+  return t === "owner_drawing";
+}
 
 export const ExpensesPage = () => {
   const queryClient = useQueryClient();
@@ -169,7 +172,7 @@ export const ExpensesPage = () => {
     let totalDrawings = 0;
     for (const e of filtered) {
       const amt = money(e.amount);
-      if (e.expense_type === "owner_draw") totalDrawings += amt;
+      if (isOwnerDrawing((e as any).expense_type)) totalDrawings += amt;
       else totalExpenses += amt;
     }
     const net = money(revenue - (totalExpenses + totalDrawings));
@@ -193,6 +196,7 @@ export const ExpensesPage = () => {
     setEditing(e);
     setFormCategory(e.category || "");
     setFormAmount(String(money(e.amount)));
+
     setFormType(e.expense_type);
     setFormPaymentMethod(e.payment_method || "");
     setFormOccurredAt(toDatetimeLocalValue(new Date(e.occurred_at)));
@@ -208,16 +212,18 @@ export const ExpensesPage = () => {
     if (!Number.isFinite(amount) || amount <= 0) return toast.error("Amount must be greater than 0");
     if (Number.isNaN(occurredAt.getTime())) return toast.error("Invalid date/time");
 
+    const dbExpenseType = formType;
+
     const patch = {
       category,
       amount,
-      expense_type: formType,
+      expense_type: dbExpenseType,
       payment_method: formPaymentMethod.trim() ? formPaymentMethod.trim() : null,
       occurred_at: occurredAt.toISOString(),
       notes: formNotes.trim() ? formNotes.trim() : null,
       source: "pos",
-      business_id: null,
-      created_by: null,
+      // do NOT override server defaults with null
+      created_by: (currentUser as any)?.id ?? undefined,
       synced_at: null,
     } as Partial<Expense>;
 
@@ -230,14 +236,15 @@ export const ExpensesPage = () => {
           id: newId(),
           created_at: nowIso,
           business_id: null,
-          created_by: null,
+          created_by: (currentUser as any)?.id ?? null,
+            
           source: "pos",
           occurred_at: (patch.occurred_at as string) || nowIso,
           category,
           notes: patch.notes ?? null,
           amount,
           payment_method: patch.payment_method ?? null,
-          expense_type: formType,
+          expense_type: dbExpenseType,
           synced_at: null,
         };
         await addExpense(exp);
@@ -423,7 +430,7 @@ export const ExpensesPage = () => {
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="expense">Expenses</SelectItem>
-              <SelectItem value="owner_draw">Owner drawings</SelectItem>
+              <SelectItem value="owner_drawing">Owner drawings</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -460,12 +467,12 @@ export const ExpensesPage = () => {
                     <div
                       className={cn(
                         "inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full border",
-                        e.expense_type === "owner_draw"
+                        isOwnerDrawing(e.expense_type)
                           ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
                           : "border-amber-500/30 bg-amber-500/10 text-amber-500"
                       )}
                     >
-                      {e.expense_type === "owner_draw" ? (
+                      {isOwnerDrawing((e as any).expense_type) ? (
                         <>
                           <ArrowUpRight className="w-3 h-3" /> Owner drawing
                         </>
@@ -541,7 +548,7 @@ export const ExpensesPage = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="expense">Expense</SelectItem>
-                  <SelectItem value="owner_draw">Owner drawing</SelectItem>
+                  <SelectItem value="owner_drawing">Owner drawing</SelectItem>
                 </SelectContent>
               </Select>
             </div>
