@@ -67,7 +67,7 @@ function formatLocal(iso: string) {
   return d.toLocaleString();
 }
 function isOwnerDrawing(t: any) {
-  return t === "owner_drawing";
+  return t === "owner_drawing" || t === "owner_draw";
 }
 
 export const ExpensesPage = () => {

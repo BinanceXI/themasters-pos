@@ -1,5 +1,4 @@
 import { supabase } from "@/lib/supabase";
-import { ensureSupabaseSession } from "@/lib/supabaseSession";
 
 export type ExpenseType = "expense" | "owner_drawing";
 
@@ -345,6 +344,15 @@ function nowTs() {
 }
 
 export async function listExpenses(range?: ExpenseRange): Promise<Expense[]> {
+  // Best-effort pull so other devices see new items
+  if (navigator.onLine) {
+    try {
+      await pullRecentExpenses(90);
+    } catch {
+      // ignore
+    }
+  }
+
   const all = await listExpensesLocal();
   return (all || [])
     .map(normalizeExpense)
