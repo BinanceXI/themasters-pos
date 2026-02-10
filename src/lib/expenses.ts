@@ -412,11 +412,6 @@ export async function syncExpenses(): Promise<void> {
     return;
   }
 
-  const sessionRes = await ensureSupabaseSession();
-  if (!sessionRes.ok) {
-    // DO NOT throw — still attempt sync using anon role if allowed by RLS
-  }
-
   for (const item of queue.sort((a, b) => (a.ts || 0) - (b.ts || 0))) {
     try {
       if (item.op === "upsert") {
@@ -454,8 +449,6 @@ export async function syncExpenses(): Promise<void> {
 async function pullRecentExpenses(daysBack: number): Promise<void> {
   if (!navigator.onLine) return;
 
-  const sessionRes = await ensureSupabaseSession();
-  if (!sessionRes.ok) throw new Error(`Cloud session required to pull expenses. ${(sessionRes as any).error || (sessionRes as any).message || ""}`);
 
   const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   const queued = loadLsQueueMap();
