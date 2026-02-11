@@ -39,6 +39,7 @@ type OrderRow = {
   total_amount: number;
   payment_method: string | null;
   created_at: string;
+  cashier_id?: string | null;
   sale_type?: string | null;
   booking_id?: string | null;
   profiles?: { full_name?: string | null } | null;
@@ -117,7 +118,7 @@ function inRange(iso: string, start: Date, end: Date) {
 }
 
 async function fetchOrdersRemote(startISO: string, endISO: string): Promise<OrderRow[]> {
-  const { data, error } = await supabase
+  const withProfiles = await supabase
     .from('orders')
     .select(
       `
@@ -125,6 +126,7 @@ async function fetchOrdersRemote(startISO: string, endISO: string): Promise<Orde
         total_amount,
         payment_method,
         created_at,
+        cashier_id,
         sale_type,
         booking_id,
         profiles (full_name),
@@ -140,8 +142,85 @@ async function fetchOrdersRemote(startISO: string, endISO: string): Promise<Orde
     .lte('created_at', endISO)
     .order('created_at', { ascending: true });
 
-  if (error) throw error;
-  return (data as any) || [];
+  if (!withProfiles.error) return (withProfiles.data as any) || [];
+
+  const withServiceNote = await supabase
+    .from('orders')
+    .select(
+      `
+        id,
+        total_amount,
+        payment_method,
+        created_at,
+        cashier_id,
+        sale_type,
+        booking_id,
+        order_items (
+          quantity,
+          price_at_sale,
+          product_name,
+          service_note
+        )
+      `
+    )
+    .gte('created_at', startISO)
+    .lte('created_at', endISO)
+    .order('created_at', { ascending: true });
+
+  let rows: any[] = [];
+  if (withServiceNote.error) {
+    const withoutServiceNote = await supabase
+      .from('orders')
+      .select(
+        `
+          id,
+          total_amount,
+          payment_method,
+          created_at,
+          cashier_id,
+          sale_type,
+          booking_id,
+          order_items (
+            quantity,
+            price_at_sale,
+            product_name
+          )
+        `
+      )
+      .gte('created_at', startISO)
+      .lte('created_at', endISO)
+      .order('created_at', { ascending: true });
+
+    if (withoutServiceNote.error) throw withoutServiceNote.error;
+    rows = (withoutServiceNote.data as any[]) || [];
+  } else {
+    rows = (withServiceNote.data as any[]) || [];
+  }
+
+  const cashierIds = Array.from(
+    new Set(rows.map((o: any) => o?.cashier_id).filter(Boolean).map((id: string) => String(id)))
+  );
+
+  let cashierMap = new Map<string, string>();
+  if (cashierIds.length > 0) {
+    const { data: profs, error: profErr } = await supabase
+      .from('profiles')
+      .select('id,full_name')
+      .in('id', cashierIds);
+
+    if (!profErr) {
+      cashierMap = new Map((profs || []).map((p: any) => [String(p.id), String(p.full_name || 'Staff')]));
+    }
+  }
+
+  return rows.map((o: any) => ({
+    ...o,
+    profiles: { full_name: cashierMap.get(String(o.cashier_id || '')) || 'Staff' },
+    order_items: (o.order_items || []).map((it: any) => ({
+      ...it,
+      service_note: it?.service_note ?? null,
+    })),
+  })) as OrderRow[];
 }
 
 export const ReportsPage = () => {
@@ -185,9 +264,14 @@ export const ReportsPage = () => {
         return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       }
 
-      const remote = await fetchOrdersRemote(monthRange.from, monthRange.to);
-      upsertOrdersCache(remote);
-      return [...remote, ...queued];
+      try {
+        const remote = await fetchOrdersRemote(monthRange.from, monthRange.to);
+        upsertOrdersCache(remote);
+        return [...remote, ...queued];
+      } catch (e) {
+        console.warn('[reports] month fetch failed, using cache fallback:', e);
+        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      }
     },
     staleTime: 1000 * 60 * 5,
     refetchOnWindowFocus: false,
@@ -291,9 +375,14 @@ export const ReportsPage = () => {
         return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       }
 
-      const remote = await fetchOrdersRemote(start.toISOString(), end.toISOString());
-      upsertOrdersCache(remote);
-      return [...remote, ...queued];
+      try {
+        const remote = await fetchOrdersRemote(start.toISOString(), end.toISOString());
+        upsertOrdersCache(remote);
+        return [...remote, ...queued];
+      } catch (e) {
+        console.warn('[reports] sales fetch failed, using cache fallback:', e);
+        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      }
     },
     staleTime: 1000 * 60 * 5 // Cache for 5 mins
   });
@@ -392,7 +481,7 @@ export const ReportsPage = () => {
   if (isLoading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin h-8 w-8 text-primary"/></div>;
 
   return (
-    <div className="p-4 md:p-6 space-y-6 pb-20 bg-slate-50/50 dark:bg-slate-950/50 min-h-screen">
+    <div className="p-4 md:p-6 space-y-6 pb-20 bg-background min-h-screen">
       
       {/* HEADER & FILTERS */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -530,7 +619,7 @@ export const ReportsPage = () => {
 	          value={`$${stats.totalRevenue.toLocaleString()}`} 
           icon={DollarSign} 
           trend="+12%" 
-          color="text-emerald-500 bg-emerald-500/10" 
+          color="text-primary bg-primary/10" 
         />
         <StatCard 
           title="Transactions" 
@@ -544,14 +633,14 @@ export const ReportsPage = () => {
           value={`$${stats.avgTicket.toFixed(2)}`} 
           icon={TrendingUp} 
           trend="-2%" 
-          color="text-violet-500 bg-violet-500/10" 
+          color="text-indigo-500 bg-indigo-500/10" 
         />
         <StatCard 
           title="Active Staff" 
           value={stats.topCashiers.length.toString()} 
           icon={Users} 
           trend="Stable" 
-          color="text-amber-500 bg-amber-500/10" 
+          color="text-sky-500 bg-sky-500/10" 
         />
       </div>
 
@@ -572,22 +661,22 @@ export const ReportsPage = () => {
                 <AreaChart data={stats.chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                      <stop offset="5%" stopColor="#4169e1" stopOpacity={0.35}/>
+                      <stop offset="95%" stopColor="#4169e1" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
                   <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} dy={10} />
                   <YAxis fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '8px', color: '#fff' }}
-                    itemStyle={{ color: '#60a5fa' }}
+                    contentStyle={{ backgroundColor: '#0a1b47', border: '1px solid #27408b', borderRadius: '8px', color: '#fff' }}
+                    itemStyle={{ color: '#8fb1ff' }}
                     formatter={(value: number) => [`$${value.toFixed(2)}`, 'Revenue']}
                   />
                   <Area 
                     type="monotone" 
                     dataKey="value" 
-                    stroke="#3b82f6" 
+                    stroke="#4169e1" 
                     strokeWidth={2}
                     fillOpacity={1} 
                     fill="url(#colorValue)" 
@@ -613,7 +702,7 @@ export const ReportsPage = () => {
               {stats.topCashiers.map((staff, i) => (
                 <div key={i} className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-white">
+                    <div className="w-8 h-8 rounded-full bg-primary/12 border border-primary/25 flex items-center justify-center text-xs font-bold text-primary">
                       {staff.name.charAt(0)}
                     </div>
                     <span className="text-sm font-medium">{staff.name}</span>
@@ -639,20 +728,20 @@ export const ReportsPage = () => {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
-                <Banknote className="w-6 h-6 mx-auto mb-2 text-emerald-500" />
+              <div className="p-4 rounded-xl bg-primary/10 border border-primary/20 text-center">
+                <Banknote className="w-6 h-6 mx-auto mb-2 text-primary" />
                 <p className="text-xs text-muted-foreground uppercase">Cash</p>
-                <p className="text-lg font-bold text-emerald-500">${stats.paymentMethods.cash.toFixed(0)}</p>
+                <p className="text-lg font-bold text-primary">${stats.paymentMethods.cash.toFixed(0)}</p>
               </div>
               <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-center">
                 <CreditCard className="w-6 h-6 mx-auto mb-2 text-blue-500" />
                 <p className="text-xs text-muted-foreground uppercase">Card</p>
                 <p className="text-lg font-bold text-blue-500">${stats.paymentMethods.card.toFixed(0)}</p>
               </div>
-              <div className="p-4 rounded-xl bg-pink-500/10 border border-pink-500/20 text-center">
-                <Smartphone className="w-6 h-6 mx-auto mb-2 text-pink-500" />
+              <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-center">
+                <Smartphone className="w-6 h-6 mx-auto mb-2 text-indigo-500" />
                 <p className="text-xs text-muted-foreground uppercase">EcoCash</p>
-                <p className="text-lg font-bold text-pink-500">${stats.paymentMethods.ecocash.toFixed(0)}</p>
+                <p className="text-lg font-bold text-indigo-500">${stats.paymentMethods.ecocash.toFixed(0)}</p>
               </div>
             </div>
           </CardContent>
@@ -696,8 +785,25 @@ const StatCard = ({ title, value, icon: Icon, trend, color }: any) => (
         <h3 className="text-2xl font-bold mt-2 tracking-tight">{value}</h3>
         {trend && (
           <div className="flex items-center gap-1 mt-1">
-            {trend.includes('+') ? <ArrowUpRight className="w-3 h-3 text-green-500" /> : <ArrowDownRight className="w-3 h-3 text-red-500" />}
-            <span className={cn("text-xs font-bold", trend.includes('+') ? "text-green-500" : "text-red-500")}>{trend}</span>
+            {trend.includes('+') ? (
+              <ArrowUpRight className="w-3 h-3 text-primary" />
+            ) : trend.includes('-') ? (
+              <ArrowDownRight className="w-3 h-3 text-muted-foreground" />
+            ) : (
+              <div className="w-3 h-3 rounded-full bg-primary/30" />
+            )}
+            <span
+              className={cn(
+                "text-xs font-bold",
+                trend.includes('+')
+                  ? "text-primary"
+                  : trend.includes('-')
+                    ? "text-muted-foreground"
+                    : "text-primary/80"
+              )}
+            >
+              {trend}
+            </span>
           </div>
         )}
       </div>

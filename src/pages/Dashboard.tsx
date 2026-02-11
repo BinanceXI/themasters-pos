@@ -125,8 +125,7 @@ export const DashboardPage = () => {
   const { data: recentTx } = useQuery({
     queryKey: ['recentTx'],
     queryFn: async () => {
-      // Fetch orders and try to get cashier name from profiles
-      const { data, error } = await supabase
+      const { data: orders, error } = await supabase
         .from('orders')
         .select(`
           id, 
@@ -134,13 +133,34 @@ export const DashboardPage = () => {
           payment_method, 
           created_at, 
           customer_name,
-          profiles (full_name) 
+          cashier_id
         `)
         .order('created_at', { ascending: false })
         .limit(5);
 
       if (error) throw error;
-      return data || [];
+      const cashierIds = Array.from(
+        new Set((orders || []).map((o: any) => o?.cashier_id).filter(Boolean))
+      ) as string[];
+
+      let cashierMap = new Map<string, string>();
+      if (cashierIds.length > 0) {
+        const { data: profs, error: profErr } = await supabase
+          .from('profiles')
+          .select('id,full_name')
+          .in('id', cashierIds);
+
+        if (!profErr) {
+          cashierMap = new Map(
+            (profs || []).map((p: any) => [String(p.id), String(p.full_name || 'Cashier')])
+          );
+        }
+      }
+
+      return (orders || []).map((o: any) => ({
+        ...o,
+        profiles: { full_name: cashierMap.get(String(o.cashier_id || '')) || 'Cashier' },
+      }));
     }
   });
 
@@ -179,7 +199,7 @@ export const DashboardPage = () => {
           </Button>
           <Button 
             onClick={() => navigate('/pos')}
-            className="bg-primary hover:bg-blue-600 text-white gap-2 shadow-lg shadow-blue-500/20"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground gap-2 shadow-[0_18px_30px_-22px_hsl(var(--primary)/0.9)]"
           >
             <ShoppingCart className="w-4 h-4" />
             New Sale
@@ -196,7 +216,7 @@ export const DashboardPage = () => {
             subtitle="Gross sales calculated from today's orders"
             trend="up"
             icon={DollarSign}
-            iconColor="bg-emerald-500/10 text-emerald-500"
+            iconColor="bg-primary/12 text-primary"
           />
         </motion.div>
         
@@ -218,7 +238,7 @@ export const DashboardPage = () => {
             subtitle="Avg. value per customer"
             trend="neutral"
             icon={TrendingUp}
-            iconColor="bg-violet-500/10 text-violet-500"
+            iconColor="bg-indigo-500/10 text-indigo-500"
           />
         </motion.div>
         
@@ -249,8 +269,8 @@ export const DashboardPage = () => {
                 amount={payments.cash} 
                 total={totalRevenue} 
                 icon={Banknote} 
-                color="text-emerald-500" 
-                bg="bg-emerald-500/10" 
+                color="text-primary" 
+                bg="bg-primary/10" 
               />
               <PaymentRow 
                 label="Card / Swipe" 
@@ -265,8 +285,8 @@ export const DashboardPage = () => {
                 amount={payments.ecocash} 
                 total={totalRevenue} 
                 icon={Smartphone} 
-                color="text-pink-500" 
-                bg="bg-pink-500/10" 
+                color="text-indigo-500" 
+                bg="bg-indigo-500/10" 
               />
             </div>
           </CardContent>

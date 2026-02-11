@@ -5,22 +5,22 @@
 @tailwind utilities;
 @layer base {
   :root {
-    --background: 38 28% 97%;
-    --foreground: 224 18% 14%;
-    --card: 40 18% 99%;
-    --card-foreground: 224 18% 14%;
-    --card-elevated: 40 30% 100%;
-    --popover: 40 18% 99%;
-    --popover-foreground: 224 18% 14%;
-    --primary: 223 21% 18%;
-    --primary-foreground: 36 35% 96%;
-    --primary-hover: 223 20% 13%;
-    --secondary: 220 14% 30%;
-    --secondary-foreground: 36 35% 96%;
-    --muted: 38 16% 90%;
-    --muted-foreground: 220 10% 40%;
-    --accent: 39 40% 58%;
-    --accent-foreground: 225 20% 15%;
+    --background: 218 53% 97%;
+    --foreground: 224 44% 15%;
+    --card: 220 45% 99%;
+    --card-foreground: 224 44% 15%;
+    --card-elevated: 218 55% 98%;
+    --popover: 220 45% 99%;
+    --popover-foreground: 224 44% 15%;
+    --primary: 225 72% 43%;
+    --primary-foreground: 0 0% 100%;
+    --primary-hover: 225 72% 36%;
+    --secondary: 219 40% 90%;
+    --secondary-foreground: 224 40% 20%;
+    --muted: 218 30% 92%;
+    --muted-foreground: 222 20% 41%;
+    --accent: 220 88% 60%;
+    --accent-foreground: 0 0% 100%;
     --success: 154 57% 34%;
     --success-foreground: 0 0% 100%;
     --warning: 38 84% 48%;
@@ -29,50 +29,50 @@
     --destructive-foreground: 0 0% 100%;
     --info: 215 82% 46%;
     --info-foreground: 0 0% 100%;
-    --border: 34 16% 83%;
-    --input: 34 16% 83%;
-    --ring: 39 42% 56%;
+    --border: 220 26% 84%;
+    --input: 220 26% 84%;
+    --ring: 225 76% 54%;
     --radius: 0.75rem;
-    --sidebar-background: 224 24% 11%;
-    --sidebar-foreground: 38 20% 90%;
-    --sidebar-primary: 39 45% 62%;
-    --sidebar-primary-foreground: 224 24% 11%;
-    --sidebar-accent: 224 16% 19%;
-    --sidebar-accent-foreground: 38 20% 90%;
-    --sidebar-border: 224 16% 22%;
-    --sidebar-ring: 39 45% 62%;
-    --pos-grid-bg: 38 26% 96%;
-    --pos-cart-bg: 40 20% 99%;
-    --pos-product-card: 40 20% 99%;
+    --sidebar-background: 226 55% 14%;
+    --sidebar-foreground: 214 45% 92%;
+    --sidebar-primary: 221 95% 72%;
+    --sidebar-primary-foreground: 225 58% 14%;
+    --sidebar-accent: 224 38% 21%;
+    --sidebar-accent-foreground: 214 45% 92%;
+    --sidebar-border: 224 34% 24%;
+    --sidebar-ring: 221 95% 72%;
+    --pos-grid-bg: 218 53% 96%;
+    --pos-cart-bg: 220 43% 99%;
+    --pos-product-card: 220 43% 99%;
   }
 
   .dark {
-    --background: 224 26% 7%;
-    --foreground: 38 20% 92%;
-    --card: 223 23% 11%;
-    --card-foreground: 38 20% 92%;
-    --card-elevated: 223 20% 14%;
-    --popover: 223 23% 11%;
-    --popover-foreground: 38 20% 92%;
-    --primary: 39 42% 63%;
-    --primary-foreground: 224 28% 10%;
-    --primary-hover: 39 47% 68%;
-    --secondary: 222 16% 21%;
-    --secondary-foreground: 38 20% 92%;
-    --muted: 223 18% 16%;
-    --muted-foreground: 35 10% 70%;
-    --accent: 39 42% 63%;
-    --accent-foreground: 224 28% 10%;
-    --border: 223 15% 20%;
-    --input: 223 15% 20%;
-    --ring: 39 42% 63%;
-    --sidebar-background: 224 30% 6%;
-    --sidebar-foreground: 38 14% 90%;
-    --sidebar-accent: 223 20% 13%;
-    --pos-grid-bg: 224 26% 7%;
-    --pos-cart-bg: 223 23% 11%;
-    --pos-numpad-bg: 223 20% 14%;
-    --pos-product-card: 223 20% 14%;
+    --background: 226 54% 8%;
+    --foreground: 214 48% 94%;
+    --card: 225 44% 12%;
+    --card-foreground: 214 48% 94%;
+    --card-elevated: 225 39% 15%;
+    --popover: 225 44% 12%;
+    --popover-foreground: 214 48% 94%;
+    --primary: 221 96% 70%;
+    --primary-foreground: 225 58% 11%;
+    --primary-hover: 221 100% 76%;
+    --secondary: 225 29% 20%;
+    --secondary-foreground: 214 48% 94%;
+    --muted: 225 25% 17%;
+    --muted-foreground: 218 24% 72%;
+    --accent: 221 96% 70%;
+    --accent-foreground: 225 58% 11%;
+    --border: 224 24% 24%;
+    --input: 224 24% 24%;
+    --ring: 221 96% 70%;
+    --sidebar-background: 226 62% 7%;
+    --sidebar-foreground: 214 44% 90%;
+    --sidebar-accent: 225 33% 15%;
+    --pos-grid-bg: 226 54% 8%;
+    --pos-cart-bg: 225 44% 12%;
+    --pos-numpad-bg: 225 39% 15%;
+    --pos-product-card: 225 39% 15%;
   }
 }
 
@@ -104,8 +104,8 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     background-image:
-      radial-gradient(1200px 650px at -10% -15%, hsl(var(--accent) / 0.14), transparent 58%),
-      radial-gradient(900px 520px at 110% -20%, hsl(var(--primary) / 0.12), transparent 60%);
+      radial-gradient(1200px 650px at -10% -15%, hsl(var(--primary) / 0.18), transparent 58%),
+      radial-gradient(900px 520px at 110% -20%, hsl(217 86% 62% / 0.16), transparent 60%);
     background-attachment: fixed;
 
     @apply bg-background text-foreground;
