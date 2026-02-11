@@ -115,6 +115,54 @@ function toRemoteRow(b: LocalServiceBooking): ServiceBooking {
   return row;
 }
 
+const LEGACY_SERVICE_ID_PREFIX = "service_id:";
+
+function withLegacyServiceIdTag(serviceId: string, serviceName: string) {
+  const id = String(serviceId || "").trim();
+  const name = String(serviceName || "").trim();
+  if (!id) return name || "Service";
+  if (!name) return `${LEGACY_SERVICE_ID_PREFIX}${id}`;
+  return `${name} | ${LEGACY_SERVICE_ID_PREFIX}${id}`;
+}
+
+function parseLegacyServiceId(serviceDescription: unknown): string | null {
+  const raw = String(serviceDescription || "").trim();
+  if (!raw) return null;
+  const m = raw.match(/service_id:([0-9a-f-]{8,})/i);
+  return m?.[1] ? String(m[1]).toLowerCase() : null;
+}
+
+function isMissingColumnError(err: unknown) {
+  const code = String((err as any)?.code || "");
+  const msg = String((err as any)?.message || "").toLowerCase();
+  return code === "42703" || (msg.includes("column") && msg.includes("does not exist"));
+}
+
+function toRemoteRowModern(b: LocalServiceBooking) {
+  return toRemoteRow(b);
+}
+
+function toRemoteRowLegacy(b: LocalServiceBooking) {
+  const row = toRemoteRow(b);
+  const total = normalizeMoney(row.total_price);
+  const deposit = normalizeMoney(row.deposit_amount);
+  const remaining = Math.max(0, normalizeMoney(total - deposit));
+
+  return {
+    id: row.id,
+    service_name: row.service_name,
+    service_description: withLegacyServiceIdTag(row.service_id, row.service_name),
+    customer_name: row.customer_name,
+    booking_date_time: row.booking_date_time,
+    total_amount: total,
+    deposit_paid: deposit,
+    remaining_balance: remaining,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export async function listLocalServiceBookings(): Promise<LocalServiceBooking[]> {
   if (!isIdbAvailable()) {
     const map = loadLsMap();
@@ -244,12 +292,25 @@ export async function pushUnsyncedServiceBookings(): Promise<{ pushed: number; f
     return { pushed: 0, failed: unsynced.length };
   }
 
-  const rows = unsynced.map(toRemoteRow);
+  let data: any[] | null = null;
+  let error: any = null;
 
-  const { data, error } = await supabase
+  const modernRes = await supabase
     .from("service_bookings")
-    .upsert(rows as any, { onConflict: "id" })
+    .upsert(unsynced.map(toRemoteRowModern) as any, { onConflict: "id" })
     .select("id, updated_at");
+  data = (modernRes.data as any[]) || null;
+  error = modernRes.error;
+
+  // Live DB compatibility: some projects still use legacy service_bookings columns.
+  if (error && isMissingColumnError(error)) {
+    const legacyRes = await supabase
+      .from("service_bookings")
+      .upsert(unsynced.map(toRemoteRowLegacy) as any, { onConflict: "id" })
+      .select("id, updated_at");
+    data = (legacyRes.data as any[]) || null;
+    error = legacyRes.error;
+  }
 
   if (error) {
     const msg = error?.message || String(error);
@@ -303,14 +364,33 @@ export async function pullRecentServiceBookings(daysBack = 30): Promise<{ pulled
 
   const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data, error } = await supabase
+  const modernSelect =
+    "id, service_id, service_name, customer_name, booking_date_time, deposit_amount, total_price, status, created_at, updated_at";
+  const legacySelect =
+    "id, service_name, service_description, customer_name, booking_date_time, total_amount, deposit_paid, remaining_balance, status, created_at, updated_at";
+
+  let data: any[] | null = null;
+  let error: any = null;
+
+  const modernRes = await supabase
     .from("service_bookings")
-    .select(
-      "id, service_id, service_name, customer_name, booking_date_time, deposit_amount, total_price, status, created_at, updated_at"
-    )
+    .select(modernSelect)
     .gte("booking_date_time", since)
     .order("booking_date_time", { ascending: true })
     .limit(500);
+  data = (modernRes.data as any[]) || null;
+  error = modernRes.error;
+
+  if (error && isMissingColumnError(error)) {
+    const legacyRes = await supabase
+      .from("service_bookings")
+      .select(legacySelect)
+      .gte("booking_date_time", since)
+      .order("booking_date_time", { ascending: true })
+      .limit(500);
+    data = (legacyRes.data as any[]) || null;
+    error = legacyRes.error;
+  }
 
   if (error) throw error;
 
@@ -327,12 +407,20 @@ export async function pullRecentServiceBookings(daysBack = 30): Promise<{ pulled
 
     const next: LocalServiceBooking = {
       id,
-      service_id: String(row.service_id || ""),
-      service_name: String(row.service_name || ""),
+      service_id:
+        String(row.service_id || "").trim() ||
+        parseLegacyServiceId(row.service_description) ||
+        String(existing?.service_id || "").trim() ||
+        id,
+      service_name: String(row.service_name || existing?.service_name || "Service"),
       customer_name: row.customer_name == null ? null : String(row.customer_name),
-      booking_date_time: String(row.booking_date_time || ""),
-      deposit_amount: normalizeMoney(row.deposit_amount),
-      total_price: normalizeMoney(row.total_price),
+      booking_date_time: String(row.booking_date_time || row.created_at || new Date().toISOString()),
+      deposit_amount: normalizeMoney(
+        row.deposit_amount != null ? row.deposit_amount : row.deposit_paid
+      ),
+      total_price: normalizeMoney(
+        row.total_price != null ? row.total_price : row.total_amount
+      ),
       status: (row.status || "booked") as ServiceBookingStatus,
       created_at: String(row.created_at || new Date().toISOString()),
       updated_at: String(row.updated_at || row.created_at || new Date().toISOString()),

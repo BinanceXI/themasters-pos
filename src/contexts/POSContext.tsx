@@ -362,6 +362,18 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     if (changed) writeQueue(next);
   };
 
+  const invalidateSalesQueries = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["products"] }),
+      queryClient.invalidateQueries({ queryKey: ["receipts"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboardStats"] }),
+      queryClient.invalidateQueries({ queryKey: ["recentTx"] }),
+      queryClient.invalidateQueries({ queryKey: ["salesReport"] }),
+      queryClient.invalidateQueries({ queryKey: ["profitAnalysis"] }),
+      queryClient.invalidateQueries({ queryKey: ["p5MonthOrders"] }),
+    ]);
+  }, [queryClient]);
+
   /* ------------------------------ OFFLINE SYNC ------------------------------ */
 
   const processOfflineQueue = useCallback(async (opts?: { silent?: boolean }) => {
@@ -431,7 +443,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
               created_at: new Date(saleTime).toISOString(),
               receipt_id: String(sale.meta.receiptId),
               receipt_number: String(sale.meta.receiptNumber),
-              sale_type: saleType === "service" ? "service" : "retail",
+              sale_type: saleType === "service" ? "service" : "product",
             };
 
             // Only send optional fields if they actually exist (avoid NOT NULL / type errors)
@@ -485,7 +497,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
             stockErrors += 1;
             console.error("Stock decrement failed during offline sale sync", e);
           }
-          await queryClient.invalidateQueries({ queryKey: ["products"] });
+          await invalidateSalesQueries();
         } catch (e: any) {
           failed.push({ ...sale, lastError: errorToMessage(e) });
         }
@@ -509,7 +521,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       if (toastId != null) toast.dismiss(toastId);
       syncingRef.current = false;
     }
-  }, [queryClient, refreshPendingSyncCount]);
+  }, [invalidateSalesQueries, refreshPendingSyncCount]);
 
   const runGlobalSync = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -835,7 +847,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           created_at: new Date(saleData.meta.timestamp).toISOString(),
           receipt_id: String(saleData.meta.receiptId),
           receipt_number: String(saleData.meta.receiptNumber),
-          sale_type: saleData.saleType === "service" ? "service" : "retail",
+          sale_type: saleData.saleType === "service" ? "service" : "product",
         };
 
         if (saleData.customerName && String(saleData.customerName).trim()) {
@@ -884,7 +896,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           console.error("Stock decrement failed after saving order/items", e);
         }
 
-        await queryClient.invalidateQueries({ queryKey: ["products"] });
+        await invalidateSalesQueries();
         return { stockOk };
       };
 

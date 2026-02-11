@@ -74,6 +74,10 @@ function newLineId() {
   return `line-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function normalizeServiceName(name: unknown) {
+  return String(name || "").trim().toLowerCase();
+}
+
 function makeReceiptId() {
   // @ts-ignore
   return globalThis.crypto?.randomUUID?.() ?? `rcpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -139,6 +143,15 @@ export function ServiceBookingsDialog({
   const [completing, setCompleting] = useState(false);
 
   const serviceById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
+  const serviceByName = useMemo(
+    () =>
+      new Map(
+        services
+          .map((s) => [normalizeServiceName(s.name), s] as const)
+          .filter(([name]) => !!name)
+      ),
+    [services]
+  );
   const selectedService = serviceId ? serviceById.get(serviceId) : undefined;
 
   useEffect(() => {
@@ -308,8 +321,20 @@ export function ServiceBookingsDialog({
         const receiptNumber = makeReceiptNumber();
         const timestamp = new Date().toISOString();
 
-        const svc: Product | undefined = serviceById.get(completeTarget.service_id);
-        const product = svc || ({ id: completeTarget.service_id, name: completeTarget.service_name, price: remaining, category: "service", type: "service" } as any);
+        const svc: Product | undefined =
+          serviceById.get(completeTarget.service_id) ||
+          serviceByName.get(normalizeServiceName(completeTarget.service_name));
+        const fallbackProductId =
+          svc?.id || String(completeTarget.service_id || "").trim() || completeTarget.id;
+        const product =
+          svc ||
+          ({
+            id: fallbackProductId,
+            name: completeTarget.service_name,
+            price: remaining,
+            category: "service",
+            type: "service",
+          } as any);
 
         const item: CartItem = {
           lineId: newLineId(),
@@ -607,4 +632,3 @@ export function ServiceBookingsDialog({
     </>
   );
 }
-

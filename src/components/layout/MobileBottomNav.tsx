@@ -35,8 +35,8 @@ export const MobileBottomNav = () => {
   });
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50 safe-area-bottom">
-      <div className="flex items-center justify-around h-16">
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background/88 backdrop-blur-xl border-t border-border/80 z-50 safe-area-bottom">
+      <div className="flex items-center justify-around h-16 px-1">
         {filteredNavItems.map((item) => {
           const isActive = location.pathname === item.path;
           return (
@@ -44,16 +44,16 @@ export const MobileBottomNav = () => {
               key={item.path}
               to={item.path}
               className={cn(
-                'flex flex-col items-center justify-center gap-1 flex-1 py-2 transition-colors relative',
+                'flex flex-col items-center justify-center gap-1 flex-1 py-2 transition-all duration-300 relative rounded-xl',
                 isActive
-                  ? 'text-primary'
+                  ? 'text-primary bg-primary/10'
                   : 'text-muted-foreground'
               )}
             >
               {isActive && (
                 <motion.div
                   layoutId="mobileActiveIndicator"
-                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-primary rounded-b-full"
+                  className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] bg-primary rounded-b-full"
                 />
               )}
               <div className="relative">

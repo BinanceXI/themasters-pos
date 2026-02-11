@@ -56,12 +56,12 @@ export const POSSidebar = () => {
       {/* ✅ FIXED (doesn't scroll) + SMALLER WIDTH */}
       <motion.aside
         initial={false}
-        animate={{ width: collapsed ? 68 : 220 }}
-        transition={{ duration: 0.18 }}
+        animate={{ width: collapsed ? 74 : 236 }}
+        transition={{ duration: 0.24, ease: [0.2, 0.7, 0.2, 1] }}
         className={cn(
           "hidden md:flex flex-col z-30",
           "fixed left-0 top-0 h-screen",
-          "bg-slate-950 border-r border-white/10"
+          "bg-[hsl(var(--sidebar-background))/0.94] border-r border-white/10 backdrop-blur-xl"
         )}
       >
         {/* ===== BRAND HEADER (NO LOGO) ===== */}
@@ -69,28 +69,28 @@ export const POSSidebar = () => {
           <div className={cn("flex items-start", collapsed ? "justify-center" : "justify-between")}>
             {!collapsed ? (
               <div className="min-w-0">
-                <div className="text-white font-semibold text-[15px] leading-tight">
+                <div className="text-white font-semibold text-[15px] tracking-tight leading-tight">
                   TheMasters POS
                 </div>
-                <div className="text-white/60 text-[12px] mt-0.5 truncate">
+                <div className="text-white/55 text-[12px] mt-0.5 truncate">
                   {displayName} • {role || "—"}
                 </div>
               </div>
             ) : (
-              <div className="text-white font-bold text-[13px] leading-none">TM</div>
+              <div className="text-white font-bold text-[13px] tracking-tight leading-none">TM</div>
             )}
           </div>
 
           {!collapsed && (
             <div className="mt-3">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.03]">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.04]">
                 <span
                   className={cn(
                     "h-2 w-2 rounded-full",
-                    navigator.onLine ? "bg-emerald-500" : "bg-amber-400"
+                    navigator.onLine ? "bg-emerald-400" : "bg-amber-300"
                   )}
                 />
-                <span className="text-[12px] text-white/70">
+                <span className="text-[12px] text-white/75">
                   {navigator.onLine ? "Online" : "Offline"}
                 </span>
               </div>
@@ -109,33 +109,33 @@ export const POSSidebar = () => {
                   key={item.path}
                   to={item.path}
                   className={cn(
-                    "group relative flex items-center rounded-2xl transition-all",
+                    "group relative flex items-center rounded-xl transition-all duration-300",
                     collapsed ? "justify-center px-2 py-3" : "px-3 py-3",
                     isActive
-                      ? "bg-gradient-to-r from-blue-600/25 to-cyan-500/10 border border-blue-500/30"
-                      : "border border-transparent hover:bg-white/[0.04] hover:border-white/10"
+                      ? "bg-white/11 border border-white/18 shadow-[0_14px_22px_-18px_rgba(0,0,0,0.7)]"
+                      : "border border-transparent hover:bg-white/[0.05] hover:border-white/10"
                   )}
                 >
                   {isActive && (
                     <motion.div
                       layoutId="activeBar"
-                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[4px] h-8 bg-blue-500 rounded-r-full"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-8 bg-[hsl(var(--sidebar-primary))] rounded-r-full"
                     />
                   )}
 
                   <item.icon
                     className={cn(
                       "shrink-0 w-5 h-5",
-                      isActive ? "text-blue-300" : "text-white/75 group-hover:text-white"
+                      isActive ? "text-[hsl(var(--sidebar-primary))]" : "text-white/72 group-hover:text-white"
                     )}
                   />
 
                   {!collapsed && (
                     <div className="ml-3 flex-1 min-w-0">
-                      <div className={cn("text-[14px] font-medium truncate", isActive ? "text-white" : "text-white/80")}>
+                      <div className={cn("text-[14px] font-medium truncate", isActive ? "text-white" : "text-white/82")}>
                         {item.label}
                       </div>
-                      <div className="text-[11px] text-white/45 truncate">
+                      <div className="text-[11px] text-white/48 truncate">
                         {item.path === "/pos" ? "Sell & checkout" : ""}
                         {item.path === "/inventory" ? "Stock & products" : ""}
                         {item.path === "/reports" ? "Analytics & exports" : ""}
@@ -148,7 +148,7 @@ export const POSSidebar = () => {
                   )}
 
                   {collapsed && (
-                    <div className="absolute left-full ml-3 px-3 py-1.5 rounded-lg text-xs font-medium opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-white/10 bg-slate-900 text-white shadow-lg">
+                    <div className="absolute left-full ml-3 px-3 py-1.5 rounded-lg text-xs font-medium opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-white/10 bg-black/75 text-white shadow-lg">
                       {item.label}
                     </div>
                   )}
@@ -158,9 +158,9 @@ export const POSSidebar = () => {
           </div>
 
           {!collapsed && isCashier && (
-            <div className="mt-4 px-3 py-3 rounded-2xl border border-white/10 bg-white/[0.03]">
-              <div className="text-[12px] text-white/70 font-medium">Cashier Mode</div>
-              <div className="text-[11px] text-white/45 mt-0.5">POS only access</div>
+            <div className="mt-4 px-3 py-3 rounded-xl border border-white/12 bg-white/[0.04] fade-rise">
+              <div className="text-[12px] text-white/75 font-medium">Cashier Mode</div>
+              <div className="text-[11px] text-white/50 mt-0.5">POS only access</div>
             </div>
           )}
         </nav>
@@ -170,9 +170,9 @@ export const POSSidebar = () => {
           <button
             onClick={() => setCollapsed((v) => !v)}
             className={cn(
-              "w-full rounded-2xl transition-colors flex items-center justify-center gap-2",
-              "text-white/65 hover:text-white bg-white/[0.02] hover:bg-white/[0.04]",
-              "border border-white/10",
+              "w-full rounded-xl transition-colors duration-300 flex items-center justify-center gap-2",
+              "text-white/70 hover:text-white bg-white/[0.03] hover:bg-white/[0.07]",
+              "border border-white/12",
               "py-2"
             )}
           >
@@ -189,7 +189,7 @@ export const POSSidebar = () => {
       </motion.aside>
 
       {/* ✅ Spacer so page content doesn't go under fixed sidebar */}
-      <div className={cn("hidden md:block", collapsed ? "w-[68px]" : "w-[220px]")} />
+      <div className={cn("hidden md:block", collapsed ? "w-[74px]" : "w-[236px]")} />
     </>
   );
 };

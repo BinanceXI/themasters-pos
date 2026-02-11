@@ -138,7 +138,10 @@ const AppRoutes = () => {
 
 const App = () => {
   useEffect(() => {
-    document.documentElement.classList.add("dark");
+    const saved = localStorage.getItem("themasters_theme");
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const shouldUseDark = saved ? saved === "dark" : prefersDark;
+    document.documentElement.classList.toggle("dark", shouldUseDark);
   }, []);
 
   return (

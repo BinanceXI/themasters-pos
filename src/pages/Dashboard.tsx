@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   DollarSign,
@@ -20,8 +20,8 @@ import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 // ✅ REAL BACKEND CONNECTION
 import { supabase } from '@/lib/supabase';
-import { useQuery } from '@tanstack/react-query';
-import { startOfDay, endOfDay, subDays, format } from 'date-fns';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { startOfDay, endOfDay, format } from 'date-fns';
 
 // --- COMPONENTS ---
 
@@ -64,11 +64,30 @@ const StatCard = ({
 
 export const DashboardPage = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const today = new Date();
+  const dayKey = format(today, 'yyyy-MM-dd');
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('dashboard-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        void queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+        void queryClient.invalidateQueries({ queryKey: ['recentTx'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+        void queryClient.invalidateQueries({ queryKey: ['lowStock'] });
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   // --- 1. FETCH TODAY'S ORDERS (REAL DATA) ---
   const { data: todayStats, isLoading: statsLoading } = useQuery({
-    queryKey: ['dashboardStats'],
+    queryKey: ['dashboardStats', dayKey],
     queryFn: async () => {
       const start = startOfDay(today).toISOString();
       const end = endOfDay(today).toISOString();
