@@ -20,6 +20,17 @@ function isTauriRuntime() {
   return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 }
 
+function normalizePrinterMode(rawMode: string, platform: string): "browser" | "tcp" | "bt" {
+  const mode = String(rawMode || "").trim().toLowerCase();
+  if (platform === "android") {
+    if (mode === "tcp" || mode === "bt") return mode;
+    return "bt";
+  }
+  // desktop/web
+  if (mode === "browser" || mode === "tcp") return mode;
+  return "browser";
+}
+
 function leftRight(left: string, right: string, width = 32) {
   const space = Math.max(1, width - left.length - right.length);
   return left + " ".repeat(space) + right;
@@ -126,6 +137,15 @@ async function printBrowserReceipt() {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
 
+    // Wait for printable content to be mounted to avoid blank print pages.
+    const waitStart = Date.now();
+    while (Date.now() - waitStart < 3000) {
+      const hasNodes = el.children.length > 0;
+      const hasText = (el.textContent || "").trim().length > 0;
+      if (hasNodes || hasText) break;
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    }
+
     // Wait for web fonts (prevents reflow mid-print).
     const anyDoc = document as any;
     if (anyDoc.fonts?.ready) {
@@ -212,17 +232,13 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
   // Default modes:
   // - Android -> bt (no popup)
   // - Desktop -> browser
-  let mode =
-    (localStorage.getItem(PRINTER_MODE_KEY) || "").trim() ||
-    (platform === "android" ? "bt" : "browser");
+  const storedMode = (localStorage.getItem(PRINTER_MODE_KEY) || "").trim();
+  let mode = normalizePrinterMode(storedMode || (platform === "android" ? "bt" : "browser"), platform);
 
   const escpos = buildEscPos(d);
 
   // ✅ ANDROID
   if (platform === "android") {
-    // ✅ SAFETY: if mode is wrong (example "browser"), force bluetooth
-    if (mode !== "bt" && mode !== "tcp") mode = "bt";
-
     if (mode === "bt") {
       await printToBluetooth58mm(escpos, { chunkSize: 800, chunkDelayMs: 35, retries: 3 });
       return;
@@ -231,7 +247,11 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
     // tcp mode
     const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
     const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
-    if (!ip) throw new Error("Printer IP not set");
+    if (!ip) {
+      // Safe fallback: many devices are configured for BT but left on TCP accidentally.
+      await printToBluetooth58mm(escpos, { chunkSize: 800, chunkDelayMs: 35, retries: 3 });
+      return;
+    }
     await sendTcp(ip, port, escpos);
     return;
   }
@@ -245,7 +265,10 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
   if (mode === "tcp") {
     const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
     const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
-    if (!ip) throw new Error("Printer IP not set");
+    if (!ip) {
+      await printBrowserReceipt();
+      return;
+    }
 
     // Silent thermal print (no window.print popups) when running inside Tauri.
     if (isTauriRuntime()) {
@@ -258,7 +281,7 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
     return;
   }
 
-  throw new Error(`Unknown printer mode on Desktop: ${mode}`);
+  await printBrowserReceipt();
 }
 
 // --------------------

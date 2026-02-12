@@ -227,14 +227,47 @@ const isSaleTypeConstraintError = (err: any) => {
   return code === "23514" || msg.includes("orders_sale_type_check") || details.includes("orders_sale_type_check");
 };
 
-const saleTypeCandidates = (saleType: SaleType): string[] =>
-  saleType === "service" ? ["service"] : ["product", "retail"];
+const uniqueNonEmpty = (values: string[]) =>
+  Array.from(new Set(values.map((v) => String(v || "").trim().toLowerCase()).filter(Boolean)));
+
+async function detectProductLikeSaleTypeFromOrders(): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .schema("public")
+      .from("orders")
+      .select("sale_type")
+      .neq("sale_type", "service")
+      .order("created_at", { ascending: false })
+      .limit(25);
+
+    if (error) return null;
+    const found = (data || [])
+      .map((r: any) => String(r?.sale_type || "").trim().toLowerCase())
+      .find((v: string) => v && v !== "service");
+    return found || null;
+  } catch {
+    return null;
+  }
+}
+
+async function saleTypeCandidates(saleType: SaleType): Promise<string[]> {
+  if (saleType === "service") return ["service"];
+
+  const detected = await detectProductLikeSaleTypeFromOrders();
+  return uniqueNonEmpty([
+    detected || "",
+    "product",
+    "retail",
+    "good",
+    "goods",
+  ]);
+}
 
 async function insertOrderWithSaleTypeFallback(
   baseOrderRow: Record<string, any>,
   saleType: SaleType
 ): Promise<{ id: string; saleTypeUsed: string }> {
-  const candidates = saleTypeCandidates(saleType);
+  const candidates = await saleTypeCandidates(saleType);
   let lastErr: any = null;
 
   for (let i = 0; i < candidates.length; i += 1) {
