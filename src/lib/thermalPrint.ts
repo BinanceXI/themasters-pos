@@ -57,6 +57,15 @@ function concat(parts: Uint8Array[]) {
   return out;
 }
 
+function esc(s: string) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export type ThermalReceiptData = {
   receiptNumber: string;
   timestamp: string;
@@ -69,6 +78,47 @@ export type ThermalReceiptData = {
   tax: number;
   total: number;
 };
+
+function buildFallbackReceiptHtml(d: ThermalReceiptData) {
+  const items = (d.cart || [])
+    .map((it) => {
+      const name = esc(String(it?.product?.name || "Item"));
+      const qty = Number(it?.quantity || 0);
+      const unit = Number(it?.customPrice ?? it?.product?.price ?? 0);
+      const line = qty * unit;
+      return `
+        <div style="margin-bottom:6px;">
+          <div style="font-weight:700;">${name}</div>
+          <div style="display:flex;justify-content:space-between;">
+            <span>${qty} x ${money(unit)}</span>
+            <span>${money(line)}</span>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div style="width:58mm;padding:6px;font-family:monospace;font-size:11px;line-height:1.3;color:#000;background:#fff;">
+      <div style="text-align:center;font-weight:800;font-size:16px;">THEMASTERS POS</div>
+      <div style="text-align:center;">Receipt: ${esc(d.receiptNumber)}</div>
+      <div style="text-align:center;">${esc(d.timestamp)}</div>
+      <div style="text-align:center;margin-bottom:6px;">Staff: ${esc(d.cashierName || "Staff")}</div>
+      ${d.customerName ? `<div style="margin-bottom:6px;">Customer: ${esc(d.customerName)}</div>` : ""}
+      <div style="border-top:1px dashed #000;margin:6px 0;"></div>
+      ${items || "<div>No items</div>"}
+      <div style="border-top:1px dashed #000;margin:6px 0;"></div>
+      <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><span>${money(d.subtotal)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Discount</span><span>${money(d.discount)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Tax</span><span>${money(d.tax)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:800;font-size:13px;margin-top:4px;">
+        <span>TOTAL</span><span>${money(d.total)}</span>
+      </div>
+      <div style="text-align:center;margin-top:8px;">Paid: ${esc(String(d.paymentMethod || "cash").toUpperCase())}</div>
+      <div style="text-align:center;margin-top:8px;">Thank you!</div>
+    </div>
+  `;
+}
 
 function buildEscPos(d: ThermalReceiptData) {
   const parts: Uint8Array[] = [];
@@ -118,13 +168,20 @@ function buildEscPos(d: ThermalReceiptData) {
   return concat(parts);
 }
 
-async function printBrowserReceipt() {
+async function printBrowserReceipt(d?: ThermalReceiptData) {
   // We rely on an existing DOM node with this id (POSPage + ReceiptsPage include it).
-  const el = document.getElementById("receipt-print-area") as HTMLElement | null;
-  if (!el) throw new Error("Receipt print area not found (#receipt-print-area)");
+  let el = document.getElementById("receipt-print-area") as HTMLElement | null;
+  let createdHost = false;
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "receipt-print-area";
+    document.body.appendChild(el);
+    createdHost = true;
+  }
 
   // Temporarily force it to render (even if Tailwind's `hidden` is applied).
   const prevStyle = el.getAttribute("style");
+  let fallbackNode: HTMLElement | null = null;
   el.style.display = "block";
   el.style.position = "fixed";
   el.style.left = "-9999px";
@@ -143,7 +200,21 @@ async function printBrowserReceipt() {
       const hasNodes = el.children.length > 0;
       const hasText = (el.textContent || "").trim().length > 0;
       if (hasNodes || hasText) break;
+      if (!fallbackNode && d) {
+        fallbackNode = document.createElement("div");
+        fallbackNode.setAttribute("data-print-fallback", "1");
+        fallbackNode.innerHTML = buildFallbackReceiptHtml(d);
+        el.appendChild(fallbackNode);
+      }
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    }
+
+    const hasRenderableContent = el.children.length > 0 || (el.textContent || "").trim().length > 0;
+    if (!hasRenderableContent && d) {
+      fallbackNode = document.createElement("div");
+      fallbackNode.setAttribute("data-print-fallback", "1");
+      fallbackNode.innerHTML = buildFallbackReceiptHtml(d);
+      el.appendChild(fallbackNode);
     }
 
     // Wait for web fonts (prevents reflow mid-print).
@@ -196,8 +267,14 @@ async function printBrowserReceipt() {
       window.print();
     });
   } finally {
+    if (fallbackNode && fallbackNode.parentElement === el) {
+      fallbackNode.remove();
+    }
     if (prevStyle == null) el.removeAttribute("style");
     else el.setAttribute("style", prevStyle);
+    if (createdHost) {
+      el.remove();
+    }
   }
 }
 
@@ -258,7 +335,7 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
 
   // ✅ DESKTOP / WINDOWS
   if (mode === "browser") {
-    await printBrowserReceipt();
+    await printBrowserReceipt(d);
     return;
   }
 
@@ -277,11 +354,11 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
     }
 
     // Browser fallback (can't open raw TCP sockets)
-    await printBrowserReceipt();
+    await printBrowserReceipt(d);
     return;
   }
 
-  await printBrowserReceipt();
+  await printBrowserReceipt(d);
 }
 
 // --------------------
