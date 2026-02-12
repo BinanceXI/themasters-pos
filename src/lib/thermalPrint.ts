@@ -120,6 +120,112 @@ function buildFallbackReceiptHtml(d: ThermalReceiptData) {
   `;
 }
 
+function collectHeadStyles() {
+  try {
+    const nodes = Array.from(
+      document.querySelectorAll('style,link[rel="stylesheet"]')
+    ) as Array<HTMLStyleElement | HTMLLinkElement>;
+    return nodes.map((n) => n.outerHTML).join("\n");
+  } catch {
+    return "";
+  }
+}
+
+async function printHtmlInIframe(receiptHtml: string) {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  iframe.style.border = "0";
+  document.body.appendChild(iframe);
+
+  try {
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc) throw new Error("Unable to initialize print frame");
+
+    const sharedStyles = collectHeadStyles();
+    doc.open();
+    doc.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          ${sharedStyles}
+          <style>
+            @page { size: 58mm auto; margin: 0; }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              width: 58mm !important;
+              background: #fff !important;
+              color: #000 !important;
+            }
+            #receipt-print-area {
+              width: 58mm !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+          </style>
+        </head>
+        <body>
+          <div id="receipt-print-area">${receiptHtml}</div>
+        </body>
+      </html>
+    `);
+    doc.close();
+
+    await new Promise<void>((resolve) => {
+      if (doc.readyState === "complete") resolve();
+      else iframe.onload = () => resolve();
+    });
+
+    const images = Array.from(doc.images || []);
+    await Promise.race([
+      Promise.all(
+        images.map(async (img) => {
+          if ((img as HTMLImageElement).complete) return;
+          await new Promise<void>((resolve) => {
+            img.addEventListener("load", () => resolve(), { once: true });
+            img.addEventListener("error", () => resolve(), { once: true });
+          });
+        })
+      ),
+      sleep(2500),
+    ]);
+
+    const win = iframe.contentWindow;
+    if (!win) throw new Error("Print frame window missing");
+
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const t = setTimeout(finish, 3000);
+      win.addEventListener(
+        "afterprint",
+        () => {
+          clearTimeout(t);
+          finish();
+        },
+        { once: true }
+      );
+      win.focus();
+      win.print();
+    });
+  } finally {
+    iframe.remove();
+  }
+}
+
 function buildEscPos(d: ThermalReceiptData) {
   const parts: Uint8Array[] = [];
 
@@ -249,23 +355,9 @@ async function printBrowserReceipt(d?: ThermalReceiptData) {
 
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-    await new Promise<void>((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-
-      // Some runtimes don't reliably fire afterprint.
-      const t = setTimeout(finish, 2500);
-      window.addEventListener("afterprint", () => {
-        clearTimeout(t);
-        finish();
-      }, { once: true });
-
-      window.print();
-    });
+    const htmlToPrint = (el.innerHTML || "").trim();
+    if (!htmlToPrint) throw new Error("Receipt content is empty");
+    await printHtmlInIframe(htmlToPrint);
   } finally {
     if (fallbackNode && fallbackNode.parentElement === el) {
       fallbackNode.remove();
@@ -343,7 +435,7 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
     const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
     const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
     if (!ip) {
-      await printBrowserReceipt();
+      await printBrowserReceipt(d);
       return;
     }
 
