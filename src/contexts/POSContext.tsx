@@ -220,6 +220,42 @@ const deriveSaleType = (items: CartItem[], fallback: SaleType = "product"): Sale
   return fallback;
 };
 
+const isSaleTypeConstraintError = (err: any) => {
+  const code = String(err?.code || "");
+  const msg = String(err?.message || "");
+  const details = String(err?.details || "");
+  return code === "23514" || msg.includes("orders_sale_type_check") || details.includes("orders_sale_type_check");
+};
+
+const saleTypeCandidates = (saleType: SaleType): string[] =>
+  saleType === "service" ? ["service"] : ["product", "retail"];
+
+async function insertOrderWithSaleTypeFallback(
+  baseOrderRow: Record<string, any>,
+  saleType: SaleType
+): Promise<{ id: string; saleTypeUsed: string }> {
+  const candidates = saleTypeCandidates(saleType);
+  let lastErr: any = null;
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const { data, error } = await supabase
+      .schema("public")
+      .from("orders")
+      .insert({ ...baseOrderRow, sale_type: candidate })
+      .select("id")
+      .single();
+
+    if (!error) return { id: String((data as any)?.id), saleTypeUsed: candidate };
+
+    lastErr = error;
+    const canRetry = isSaleTypeConstraintError(error) && i < candidates.length - 1;
+    if (!canRetry) throw error;
+  }
+
+  throw lastErr || new Error("Failed to insert order");
+}
+
   /* -------------------------- STOCK DECREMENT RPC ---------------------------- */
 
   const decrementStockForItems = async (items: CartItem[]) => {
@@ -443,7 +479,6 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
               created_at: new Date(saleTime).toISOString(),
               receipt_id: String(sale.meta.receiptId),
               receipt_number: String(sale.meta.receiptNumber),
-              sale_type: saleType === "service" ? "service" : "product",
             };
 
             // Only send optional fields if they actually exist (avoid NOT NULL / type errors)
@@ -454,21 +489,15 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
               orderRow.booking_id = String(bookingId).trim();
             }
 
-            const { data, error } = await supabase
-              .schema("public")
-              .from("orders")
-              .insert(orderRow)
-              .select("id")
-              .single();
-              console.log("[orders insert] sale_type =", orderRow.sale_type);
-
-            if (error) {
+            try {
+              const inserted = await insertOrderWithSaleTypeFallback(orderRow, saleType);
+              console.log("[orders insert] sale_type =", inserted.saleTypeUsed);
+              orderId = inserted.id;
+            } catch (error: any) {
               console.error("[orders insert] error object:", error);
               console.error("[orders insert] orderRow payload:", orderRow);
               throw error;
             }
-
-            orderId = data.id;
           }
 
           const { error: delErr } = await supabase
@@ -847,7 +876,6 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           created_at: new Date(saleData.meta.timestamp).toISOString(),
           receipt_id: String(saleData.meta.receiptId),
           receipt_number: String(saleData.meta.receiptNumber),
-          sale_type: saleData.saleType === "service" ? "service" : "product",
         };
 
         if (saleData.customerName && String(saleData.customerName).trim()) {
@@ -857,15 +885,13 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
           orderRow.booking_id = String(saleData.bookingId).trim();
         }
 
-        const { data: order, error: orderErr } = await supabase
-          .schema("public")
-          .from("orders")
-          .insert(orderRow)
-          .select("id")
-          .single();
-          console.log("[orders insert online] sale_type =", orderRow.sale_type);
-
-        if (orderErr) {
+        const normalizedSaleType: SaleType = saleData.saleType === "service" ? "service" : "product";
+        let orderId = "";
+        try {
+          const inserted = await insertOrderWithSaleTypeFallback(orderRow, normalizedSaleType);
+          orderId = inserted.id;
+          console.log("[orders insert online] sale_type =", inserted.saleTypeUsed);
+        } catch (orderErr: any) {
           console.error("[orders insert ONLINE] error object:", orderErr);
           console.error("[orders insert ONLINE] orderRow payload:", orderRow);
           throw orderErr;
@@ -876,7 +902,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         .from("order_items")
         .insert(
           saleItems.map((i: any) => ({
-            order_id: order.id,
+            order_id: orderId,
             product_id: i.product.id,
             product_name: i.product.name,
             quantity: Number(i.quantity),

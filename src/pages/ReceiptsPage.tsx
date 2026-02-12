@@ -29,6 +29,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { PrintableReceipt } from "@/components/pos/PrintableReceipt";
 import type { CartItem, Product, Discount } from "@/types/pos";
+import { Capacitor } from "@capacitor/core";
 // 🔥 THERMAL PRINTER
 import {
   PRINTER_MODE_KEY,
@@ -119,6 +120,7 @@ type PrintData = {
   discount: number;
   tax: number;
   total: number;
+  timestamp?: string;
   cashierName: string;
   customerName: string;
   receiptId: string;
@@ -136,11 +138,35 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+function toThermalPayload(data: PrintData) {
+  return {
+    receiptNumber: data.receiptNumber,
+    timestamp: data.timestamp || new Date().toISOString(),
+    cashierName: data.cashierName || "Staff",
+    customerName: data.customerName || "",
+    paymentMethod: data.paymentMethod || "cash",
+    cart: (data.cart || []).map((it: any) => ({
+      product: {
+        name: String(it?.product?.name || "Item"),
+        price: num(it?.customPrice ?? it?.product?.price ?? 0),
+      },
+      quantity: Math.max(1, num(it?.quantity) || 1),
+      customPrice: it?.customPrice != null ? num(it.customPrice) : undefined,
+    })),
+    subtotal: num(data.subtotal),
+    discount: num(data.discount),
+    tax: num(data.tax),
+    total: num(data.total),
+  };
+}
+
 export const ReceiptsPage = () => {
   const { currentUser, can } = usePOS();
   const isAdmin = currentUser?.role === "admin";
   const canVoid = isAdmin || !!currentUser?.permissions?.allowVoid;
   const queryClient = useQueryClient();
+  const platform = Capacitor.getPlatform();
+  const isAndroid = platform === "android";
   // 🔥 AUTO-RUN THERMAL QUEUE
 useEffect(() => {
   tryPrintThermalQueue();
@@ -154,8 +180,14 @@ useEffect(() => {
 
   const [activeTab, setActiveTab] = useState<"settings" | "receipts">("settings");
   // 🔥 PRINTER SETTINGS
+const normalizePrinterMode = (raw: string | null) => {
+  const mode = String(raw || "").trim();
+  if (mode === "browser" || mode === "tcp") return mode;
+  if (isAndroid && mode === "bt") return "bt";
+  return isAndroid ? "bt" : "browser";
+};
 const [printerMode, setPrinterMode] = useState(
-  localStorage.getItem(PRINTER_MODE_KEY) || "tcp"
+  normalizePrinterMode(localStorage.getItem(PRINTER_MODE_KEY))
 );
 const [printerIp, setPrinterIp] = useState(
   localStorage.getItem(PRINTER_IP_KEY) || ""
@@ -175,18 +207,21 @@ const [printerPort, setPrinterPort] = useState(
   const [printData, setPrintData] = useState<PrintData | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
 
-  useEffect(() => {
-    if (!printData) return;
-    const t = setTimeout(() => {
-      try {
-        setIsPrinting(true);
-        window.print();
-      } finally {
-        setTimeout(() => setIsPrinting(false), 700);
-      }
-    }, 250);
-    return () => clearTimeout(t);
-  }, [printData]);
+  const runReprint = useCallback(async (data: PrintData) => {
+    setPrintData(data);
+    setIsPrinting(true);
+    try {
+      // Let React commit #receipt-print-area before printer pipeline reads it.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await printReceiptSmart(toThermalPayload(data));
+      toast.success("Print sent");
+    } catch (e: any) {
+      toast.error(e?.message || "Print failed");
+    } finally {
+      setTimeout(() => setIsPrinting(false), 700);
+    }
+  }, []);
   useEffect(() => {
   if (activeTab !== "receipts") return;
 
@@ -265,7 +300,9 @@ const [printerPort, setPrinterPort] = useState(
 
   // 🔥 SAVE PRINTER SETTINGS
 const savePrinterSettings = () => {
-  localStorage.setItem(PRINTER_MODE_KEY, printerMode);
+  const nextMode = normalizePrinterMode(printerMode);
+  if (nextMode !== printerMode) setPrinterMode(nextMode);
+  localStorage.setItem(PRINTER_MODE_KEY, nextMode);
   localStorage.setItem(PRINTER_IP_KEY, printerIp);
   localStorage.setItem(PRINTER_PORT_KEY, printerPort);
 
@@ -275,26 +312,28 @@ const savePrinterSettings = () => {
 
 // 🔥 TEST THERMAL PRINT
 const testThermalPrint = async () => {
-  try {
-    await printReceiptSmart({
-      receiptNumber: "TEST-0001",
-      timestamp: new Date().toISOString(),
-      cashierName: "SYSTEM",
-      customerName: "",
-      paymentMethod: "cash",
-      cart: [
-        { product: { name: "TEST ITEM", price: 1 }, quantity: 1 },
-      ],
-      subtotal: 1,
-      discount: 0,
-      tax: 0,
-      total: 1,
-    });
-
-    toast.success("Test print sent");
-  } catch (e: any) {
-    toast.error(e?.message || "Printer not reachable");
-  }
+  await runReprint({
+    cart: [
+      {
+        lineId: `test-${Date.now()}`,
+        product: { id: "test", name: "TEST ITEM", price: 1, category: "General", type: "good" },
+        quantity: 1,
+        discount: 0,
+        discountType: "percentage",
+        customPrice: 1,
+      } as any,
+    ],
+    subtotal: 1,
+    discount: 0,
+    tax: 0,
+    total: 1,
+    timestamp: new Date().toISOString(),
+    cashierName: "SYSTEM",
+    customerName: "",
+    receiptId: "test-receipt-id",
+    receiptNumber: "TEST-0001",
+    paymentMethod: "cash",
+  });
 };
 
   // preview verify link (HashRouter safe)
@@ -427,27 +466,29 @@ const testThermalPrint = async () => {
         const tax = row.tax_amount != null ? num(row.tax_amount) : 0;
         const total = num(row.total_amount) || round2(subtotal - discount + tax);
 
-        setPrintData({
+        const prepared: PrintData = {
           cart,
           subtotal,
           discount,
           tax,
           total,
+          timestamp: row.created_at,
           cashierName: row.profiles?.full_name || "Staff",
           customerName: row.customer_name || "",
-          receiptId: row.receipt_id,
-          receiptNumber: row.receipt_number,
+          receiptId: row.receipt_id || `online-${row.id}`,
+          receiptNumber: row.receipt_number || `TM-${String(row.id).slice(0, 6).toUpperCase()}`,
           paymentMethod: row.payment_method || "cash",
-        });
+        };
+        await runReprint(prepared);
       } catch (e: any) {
         toast.error(e?.message || "Failed to load items to print");
       }
     },
-    [setPrintData]
+    [runReprint]
   );
 
   const printOfflineReceipt = useCallback(
-    (sale: any) => {
+    async (sale: any) => {
       const cart: CartItem[] = (sale.items || []).map((it: any) => ({
         ...it,
         lineId: it.lineId || `off-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -461,20 +502,22 @@ const testThermalPrint = async () => {
       );
 
       // offline queue currently doesn’t store discount/tax breakdown, so print as 0 unless you add later
-      setPrintData({
+      const prepared: PrintData = {
         cart,
         subtotal,
         discount: 0,
         tax: 0,
         total: num(sale.total) || subtotal,
+        timestamp: sale?.meta?.timestamp || new Date().toISOString(),
         cashierName: currentUser?.name || currentUser?.full_name || "Staff",
         customerName: sale.customerName || "",
-        receiptId: sale.meta?.receiptId,
-        receiptNumber: sale.meta?.receiptNumber,
+        receiptId: String(sale?.meta?.receiptId || `offline-${Date.now()}`),
+        receiptNumber: String(sale?.meta?.receiptNumber || `TM-OFF-${Date.now().toString().slice(-6)}`),
         paymentMethod: sale.payments?.[0]?.method || "cash",
-      });
+      };
+      await runReprint(prepared);
     },
-    [currentUser?.name, currentUser?.full_name]
+    [currentUser?.name, currentUser?.full_name, runReprint]
   );
 
   // ✅ VOID (recommended instead of delete)
@@ -638,6 +681,7 @@ const testThermalPrint = async () => {
         className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
         disabled={!isAdmin}
       >
+        {isAndroid && <option value="bt">Bluetooth (Android)</option>}
         <option value="tcp">Thermal (LAN / Wi-Fi)</option>
         <option value="browser">Browser (Fallback)</option>
       </select>
