@@ -17,7 +17,15 @@ function sleep(ms: number) {
 }
 
 function isTauriRuntime() {
-  return typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+  if (typeof window === "undefined") return false;
+  const w = window as any;
+  const ua = String(window.navigator?.userAgent || "");
+  return Boolean(
+    w.__TAURI_INTERNALS__ ||
+      w.__TAURI__ ||
+      w.__TAURI_IPC__ ||
+      ua.includes("Tauri")
+  );
 }
 
 function normalizePrinterMode(rawMode: string, platform: string): "browser" | "tcp" | "bt" {
@@ -389,14 +397,17 @@ async function sendTcp(ip: string, port: number, data: Uint8Array) {
 }
 
 async function sendTcpDesktopViaTauri(ip: string, port: number, data: Uint8Array) {
-  if (!isTauriRuntime()) throw new Error("TCP printing requires the Tauri desktop app");
-
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("tcp_print_escpos", { host: ip, port, data: Array.from(data) });
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("tcp_print_escpos", { host: ip, port, data: Array.from(data) });
+  } catch (e: any) {
+    throw new Error(e?.message || "Tauri TCP print failed");
+  }
 }
 
 export async function printReceiptSmart(d: ThermalReceiptData) {
   const platform = Capacitor.getPlatform();
+  const tauriRuntime = isTauriRuntime();
 
   // Default modes:
   // - Android -> bt (no popup)
@@ -427,6 +438,19 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
 
   // ✅ DESKTOP / WINDOWS
   if (mode === "browser") {
+    // Windows app: if IP is configured, prefer native TCP print first.
+    if (tauriRuntime) {
+      const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
+      const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
+      if (ip) {
+        try {
+          await sendTcpDesktopViaTauri(ip, port, escpos);
+          return;
+        } catch (e) {
+          console.warn("[print] tauri tcp from browser-mode failed, falling back to browser print:", e);
+        }
+      }
+    }
     await printBrowserReceipt(d);
     return;
   }
@@ -435,12 +459,13 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
     const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
     const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
     if (!ip) {
+      if (tauriRuntime) throw new Error("Printer IP not set for TCP mode");
       await printBrowserReceipt(d);
       return;
     }
 
-    // Silent thermal print (no window.print popups) when running inside Tauri.
-    if (isTauriRuntime()) {
+    // Silent thermal print in Tauri desktop.
+    if (tauriRuntime) {
       await sendTcpDesktopViaTauri(ip, port, escpos);
       return;
     }
