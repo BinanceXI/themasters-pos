@@ -1,14 +1,12 @@
-// BinanceXI watermark
-import { useEffect, useMemo, useState } from "react";
+// BinanceXI wordmark + mark (no image assets)
+import { useMemo } from "react";
 import { BRAND } from "@/lib/brand";
-import logoDarkSrc from "@/assets/brand/logo-b25d-dark.png";
-import logoLightSrc from "@/assets/brand/logo-ff96-light.png";
 import { cn } from "@/lib/utils";
 
 export function BrandMark({ className, title }: { className?: string; title?: string }) {
   const letter = useMemo(() => {
-    const src = String(BRAND.shortName || BRAND.name || "K").trim();
-    return (src ? src.slice(0, 1) : "K").toUpperCase();
+    const src = String(BRAND.shortName || BRAND.name || "B").trim();
+    return (src ? src.slice(0, 1) : "B").toUpperCase();
   }, []);
 
   return (
@@ -42,50 +40,68 @@ export function BrandLogo({
   title?: string;
   tone?: BrandLogoTone;
 }) {
-  const [failed, setFailed] = useState(false);
-  const [isDark, setIsDark] = useState(
-    () => typeof document !== "undefined" && document.documentElement.classList.contains("dark")
-  );
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    const sync = () => setIsDark(root.classList.contains("dark"));
-    sync();
-
-    const observer = new MutationObserver(sync);
-    observer.observe(root, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
-
   const safeAlt = useMemo(() => {
     const a = String(alt || "").trim();
     return a || BRAND.name;
   }, [alt]);
 
-  const logoSrc = useMemo(() => {
-    if (tone === "dark") return logoDarkSrc;
-    if (tone === "light") return logoLightSrc;
-    return isDark ? logoLightSrc : logoDarkSrc;
-  }, [isDark, tone]);
+  const short = String(BRAND.shortName || BRAND.name || "BinanceXI").trim();
+  const base = useMemo(() => {
+    if (!short) return "Binance";
+    if (short.length > 2 && short.toUpperCase().endsWith("XI")) return short.slice(0, -2);
+    return short;
+  }, [short]);
+  const suffix = useMemo(() => {
+    if (!short) return "XI";
+    if (short.length > 2 && short.toUpperCase().endsWith("XI")) return short.slice(-2);
+    return "";
+  }, [short]);
 
-  if (failed) {
-    return (
-      <div className={cn("font-black tracking-tight select-none", className)} title={title || BRAND.name}>
-        {BRAND.name}
-      </div>
-    );
-  }
+  const toneClasses = useMemo(() => {
+    if (tone === "light") {
+      return {
+        baseText: "text-white",
+        suffixText: "text-[#89dbff]",
+        badge: "border-white/20 bg-white/10 text-white",
+      };
+    }
+    if (tone === "dark") {
+      return {
+        baseText: "text-slate-950",
+        suffixText: "text-primary",
+        badge: "border-slate-950/20 bg-slate-950/5 text-slate-950",
+      };
+    }
+    return {
+      baseText: "text-foreground",
+      suffixText: "bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent",
+      badge: "border-primary/30 bg-primary/15 text-primary",
+    };
+  }, [tone]);
 
   return (
-    <img
-      src={logoSrc}
-      alt={safeAlt}
-      title={title}
-      className={cn("object-contain", className)}
-      onError={() => setFailed(true)}
-      decoding="async"
-      loading="eager"
-    />
+    <div
+      className={cn(
+        "inline-flex items-center justify-center gap-2 select-none whitespace-nowrap leading-none",
+        "font-extrabold tracking-tight",
+        "text-[clamp(28px,4.6vw,60px)]",
+        className
+      )}
+      aria-label={safeAlt}
+      title={title || BRAND.name}
+    >
+      <span className={cn("flex items-baseline", toneClasses.baseText)}>
+        <span>{base}</span>
+        {suffix ? <span className={cn("ml-[1px]", toneClasses.suffixText)}>{suffix}</span> : null}
+      </span>
+      <span
+        className={cn(
+          "rounded-md px-2 py-1 text-[0.32em] font-black tracking-[0.28em] uppercase border",
+          toneClasses.badge
+        )}
+      >
+        POS
+      </span>
+    </div>
   );
 }

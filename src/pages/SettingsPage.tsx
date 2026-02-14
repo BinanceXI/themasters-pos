@@ -858,7 +858,7 @@ export const SettingsPage = () => {
         <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)] lg:overflow-y-auto rounded-2xl bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 p-3">
           {/* Header */}
           <div className="flex items-center gap-3 px-1 mb-3">
-            <BrandLogo className="h-10 w-auto" alt="BinanceXI POS" />
+            <BrandLogo className="text-xl" alt="BinanceXI POS" />
             <div className="leading-tight min-w-0">
               <div className="text-base font-bold text-slate-900 dark:text-white truncate">
                 Settings
@@ -953,7 +953,7 @@ export const SettingsPage = () => {
 
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-xl border border-border">
-                    <BrandLogo className="h-12 w-auto" alt="BinanceXI POS" />
+                    <BrandLogo className="text-2xl" alt="BinanceXI POS" />
                     <div className="min-w-0">
                       <h3 className="font-bold text-lg truncate">
                         {formData.business_name || "Your Business"}

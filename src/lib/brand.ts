@@ -17,10 +17,9 @@ export const BRAND: BrandConfig = {
   receiptTitleLines: ["BINANCEXI", "POS"],
   supportLine: "by Binance Labs",
   colors: {
-    // Keep the existing blue/cyan scheme (from the Dawn/Kendrick build).
+    // Blue/cyan scheme.
     primary: "#197cbc",
     accent: "#2baee4",
     accentMuted: "#89dbff",
   },
 };
-
