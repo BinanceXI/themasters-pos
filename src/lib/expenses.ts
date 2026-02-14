@@ -27,14 +27,14 @@ type ExpenseQueueItem =
   | { id: string; op: "upsert"; expense: Expense; ts: number; lastError?: string }
   | { id: string; op: "delete"; ts: number; lastError?: string };
 
-const DB_NAME = "themasters_pos_expenses";
+const DB_NAME = "binancexi_pos_expenses";
 const DB_VERSION = 1;
 const EXPENSES_STORE = "expenses";
 const QUEUE_STORE = "expense_queue";
 
-const LS_EXPENSES_KEY = "themasters_expenses_v1";
-const LS_QUEUE_KEY = "themasters_expenses_queue_v1";
-const LS_QUEUE_COUNT_KEY = "themasters_expenses_queue_count_v1";
+const LS_EXPENSES_KEY = "binancexi_expenses_v1";
+const LS_QUEUE_KEY = "binancexi_expenses_queue_v1";
+const LS_QUEUE_COUNT_KEY = "binancexi_expenses_queue_count_v1";
 
 function isIdbAvailable() {
   return typeof indexedDB !== "undefined";
@@ -68,7 +68,7 @@ function saveLsQueueMap(map: Record<string, ExpenseQueueItem>) {
 
 function notifyQueueChanged() {
   try {
-    window.dispatchEvent(new Event("themasters:queue_changed"));
+    window.dispatchEvent(new Event("binancexi:queue_changed"));
   } catch {
     // ignore
   }

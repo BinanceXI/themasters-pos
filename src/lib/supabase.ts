@@ -81,6 +81,7 @@ export interface OrderItem {
 export interface Profile {
   id: string;
   full_name: string | null;
-  role: "admin" | "cashier";
+  role: "platform_admin" | "admin" | "cashier";
   permissions: any;
+  business_id?: string | null;
 }

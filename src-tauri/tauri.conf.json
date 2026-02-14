@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "TheMasters POS",
+  "productName": "BinanceXI POS",
   "version": "0.1.0",
-  "identifier": "com.nitiance.themasterspos",
+  "identifier": "com.binancexi.pos",
   "build": {
   "frontendDist": "../dist",
   "devUrl": "http://localhost:8080",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TheMasters POS",
+        "title": "BinanceXI POS",
         "width": 800,
         "height": 600,
         "resizable": true,

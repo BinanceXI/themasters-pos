@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { ensureSupabaseSession } from "@/lib/supabaseSession";
 
-export const PRODUCTS_QUEUE_KEY = "themasters_products_mutation_queue_v2";
+export const PRODUCTS_QUEUE_KEY = "binancexi_products_mutation_queue_v2";
 
 export type ProductUpsertPayload = {
   id: string;
@@ -39,7 +39,7 @@ function safeParse<T>(raw: string | null, fallback: T): T {
 
 function notifyQueueChanged() {
   try {
-    window.dispatchEvent(new Event("themasters:queue_changed"));
+    window.dispatchEvent(new Event("binancexi:queue_changed"));
   } catch {
     // ignore
   }

@@ -1,5 +1,5 @@
 // File: src/lib/printQueue.ts
-const KEY = "themasters_thermal_print_queue_v1";
+const KEY = "binancexi_thermal_print_queue_v1";
 
 export type ThermalJob = {
   receiptNumber: string;

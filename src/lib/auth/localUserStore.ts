@@ -4,18 +4,19 @@ export type LocalAuthUser = {
   id: string;
   username: string;
   full_name: string | null;
-  role: "admin" | "cashier";
+  role: "platform_admin" | "admin" | "cashier";
   permissions: any;
+  business_id?: string | null;
   active: boolean;
   password: PasswordHash;
   updated_at: string; // ISO
 };
 
-const DB_NAME = "themasters_pos_auth";
+const DB_NAME = "binancexi_pos_auth";
 const DB_VERSION = 1;
 const STORE = "users";
 
-const LS_FALLBACK_KEY = "themasters_auth_users_v1";
+const LS_FALLBACK_KEY = "binancexi_auth_users_v1";
 
 function isIdbAvailable() {
   return typeof indexedDB !== "undefined";
@@ -194,4 +195,3 @@ export async function renameLocalUser(oldUsername: string, newUsername: string):
   await upsertLocalUser(next);
   await deleteLocalUser(from);
 }
-

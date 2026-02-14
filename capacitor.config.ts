@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.themasters.pos',
-  appName: 'TheMasters POS',
+  appId: 'com.binancexi.pos',
+  appName: 'BinanceXI POS',
   webDir: 'dist',
 
   android: {

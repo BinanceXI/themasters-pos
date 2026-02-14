@@ -34,18 +34,48 @@ serve(async (req) => {
     const admin = supabaseAdminClient(env);
     const { data: caller, error: callerErr } = await admin
       .from("profiles")
-      .select("role, active")
+      .select("role, active, business_id")
       .eq("id", user.id)
       .maybeSingle();
 
     if (callerErr) return json(500, { error: "Failed to check caller role" });
     if (!caller || caller.active === false) return json(403, { error: "Account disabled" });
-    if (caller.role !== "admin") return json(403, { error: "Admins only" });
+
+    const callerRole = String((caller as any)?.role || "");
+    const isPlatformAdmin = callerRole === "platform_admin";
+    const isBusinessAdmin = callerRole === "admin";
+
+    if (!isPlatformAdmin && !isBusinessAdmin) return json(403, { error: "Admins only" });
 
     const body = await req.json().catch(() => ({} as any));
     const user_id = String(body?.user_id || "").trim();
     if (!user_id) return json(400, { error: "Missing user_id" });
     if (user_id === user.id) return json(400, { error: "You cannot delete your own account" });
+
+    // Business admins can only manage users inside their business.
+    if (!isPlatformAdmin) {
+      const callerBusinessId = String((caller as any)?.business_id || "").trim();
+      if (!callerBusinessId) {
+        return json(400, {
+          error: "Caller has no business_id. Ask BinanceXI POS admin to fix your account.",
+        });
+      }
+
+      const { data: target, error: targetErr } = await admin
+        .from("profiles")
+        .select("id, role, business_id")
+        .eq("id", user_id)
+        .maybeSingle();
+
+      if (targetErr) return json(500, { error: "Failed to load target user profile" });
+      if (!target) return json(404, { error: "Target user profile not found" });
+      if (String((target as any)?.role || "") === "platform_admin") {
+        return json(403, { error: "Not allowed" });
+      }
+      if (String((target as any)?.business_id || "") !== callerBusinessId) {
+        return json(403, { error: "Not allowed" });
+      }
+    }
 
     const { error: delErr } = await admin.auth.admin.deleteUser(user_id);
     if (delErr) return json(400, { error: delErr.message });

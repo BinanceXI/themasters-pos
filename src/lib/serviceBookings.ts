@@ -21,11 +21,11 @@ export type LocalServiceBooking = ServiceBooking & {
   lastError?: string;
 };
 
-const DB_NAME = "themasters_pos_bookings";
+const DB_NAME = "binancexi_pos_bookings";
 const DB_VERSION = 1;
 const STORE = "service_bookings";
 
-const LS_FALLBACK_KEY = "themasters_service_bookings_v1";
+const LS_FALLBACK_KEY = "binancexi_service_bookings_v1";
 
 function isIdbAvailable() {
   return typeof indexedDB !== "undefined";
@@ -50,7 +50,7 @@ function saveLsMap(map: Record<string, LocalServiceBooking>) {
 
 function notifyQueueChanged() {
   try {
-    window.dispatchEvent(new Event("themasters:queue_changed"));
+    window.dispatchEvent(new Event("binancexi:queue_changed"));
   } catch {
     // ignore
   }

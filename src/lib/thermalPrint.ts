@@ -4,9 +4,9 @@ import { getThermalQueue, removeThermalJob } from "@/lib/printQueue";
 import { printToBluetooth58mm } from "@/lib/androidBluetoothPrint";
 
 // settings keys (used by your Settings UI)
-export const PRINTER_MODE_KEY = "themasters_printer_mode"; // "browser" | "tcp" | "bt"
-export const PRINTER_IP_KEY = "themasters_printer_ip"; // e.g. 192.168.1.50
-export const PRINTER_PORT_KEY = "themasters_printer_port"; // usually 9100
+export const PRINTER_MODE_KEY = "binancexi_printer_mode"; // "browser" | "tcp" | "bt"
+export const PRINTER_IP_KEY = "binancexi_printer_ip"; // e.g. 192.168.1.50
+export const PRINTER_PORT_KEY = "binancexi_printer_port"; // usually 9100
 
 const encoder = new TextEncoder();
 const ESC = 0x1b;
@@ -108,7 +108,7 @@ function buildFallbackReceiptHtml(d: ThermalReceiptData) {
 
   return `
     <div style="width:58mm;padding:6px;font-family:monospace;font-size:11px;line-height:1.3;color:#000;background:#fff;">
-      <div style="text-align:center;font-weight:800;font-size:16px;">THEMASTERS POS</div>
+      <div style="text-align:center;font-weight:800;font-size:16px;">BINANCEXI POS</div>
       <div style="text-align:center;">Receipt: ${esc(d.receiptNumber)}</div>
       <div style="text-align:center;">${esc(d.timestamp)}</div>
       <div style="text-align:center;margin-bottom:6px;">Staff: ${esc(d.cashierName || "Staff")}</div>
@@ -240,7 +240,7 @@ function buildEscPos(d: ThermalReceiptData) {
   parts.push(bytes(ESC, 0x40)); // init
   parts.push(bytes(ESC, 0x61, 0x01)); // center
   parts.push(bytes(ESC, 0x45, 0x01)); // bold on
-  parts.push(textLine("THEMASTERS POS"));
+  parts.push(textLine("BINANCEXI POS"));
   parts.push(bytes(ESC, 0x45, 0x00)); // bold off
   parts.push(textLine(`Receipt: ${d.receiptNumber}`));
   parts.push(textLine(d.timestamp));
@@ -413,7 +413,7 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
   // - Android -> bt (no popup)
   // - Desktop -> browser
   const storedMode = (localStorage.getItem(PRINTER_MODE_KEY) || "").trim();
-  let mode = normalizePrinterMode(storedMode || (platform === "android" ? "bt" : "browser"), platform);
+  const mode = normalizePrinterMode(storedMode || (platform === "android" ? "bt" : "browser"), platform);
 
   const escpos = buildEscPos(d);
 

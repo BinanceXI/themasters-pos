@@ -10,7 +10,7 @@ function isAndroidNative() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
 }
 
-const BT_LAST_ADDRESS_KEY = "themasters_printer_bt_address";
+const BT_LAST_ADDRESS_KEY = "binancexi_printer_bt_address";
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));

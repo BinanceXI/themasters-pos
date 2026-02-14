@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { QRCodeSVG } from "qrcode.react";
 import type { CartItem, Discount } from "@/types/pos";
-import themastersLogo from "@/assets/themasters-logo.png";
+import brandLogo from "@/assets/brand/logo-b25d-dark.png";
 import { buildVerifyUrl } from "@/lib/verifyUrl";
 
 type DiscountType = "percentage" | "fixed";
@@ -63,7 +63,7 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
   });
 
   const origin =
-    typeof window !== "undefined" && window.location?.origin ? window.location.origin : "https://themasters.tech";
+    typeof window !== "undefined" && window.location?.origin ? window.location.origin : "https://binancexi-pos.app";
 
   const baseUrl = (settings as any)?.qr_code_data || origin;
   const qrUrl = buildVerifyUrl(baseUrl, receiptId);
@@ -114,14 +114,14 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
       {/* HEADER */}
       <div className="text-center mb-2">
         <img
-          src={themastersLogo}
-          alt="Logo"
+          src={brandLogo}
+          alt="BinanceXI POS"
           className="h-10 mx-auto mb-1 object-contain"
           style={{ filter: "grayscale(100%) contrast(200%)" }}
         />
 
         <h2 className="font-black text-[18px] uppercase leading-none mb-0.5">
-          {(settings as any)?.business_name || "TheMasters"}
+          {(settings as any)?.business_name || "Your Business"}
         </h2>
 
         {(settings as any)?.address ? <p className="text-[9px]">{(settings as any).address}</p> : null}
@@ -243,11 +243,10 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
           <div className="text-[9px] uppercase px-1 whitespace-pre-wrap">{(settings as any).footer_message}</div>
         ) : null}
 
-        <div className="text-[8px] font-bold mt-2">POWERED BY THEMASTERS</div>
+        <div className="text-[8px] font-bold mt-2">POWERED BY BINANCE LABS</div>
       </div>
     </div>
   );
 });
 
 PrintableReceipt.displayName = "PrintableReceipt";
-

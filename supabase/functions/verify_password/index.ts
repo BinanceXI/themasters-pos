@@ -17,6 +17,7 @@ type ProfileRow = {
   full_name: string | null;
   role: "admin" | "cashier" | string | null;
   permissions: any;
+  business_id: string | null;
   active: boolean | null;
 };
 
@@ -44,7 +45,7 @@ serve(async (req) => {
 
     const { data: profile, error: profErr } = await admin
       .from("profiles")
-      .select("id, username, full_name, role, permissions, active")
+      .select("id, username, full_name, role, permissions, active, business_id")
       .eq("username", username)
       .maybeSingle();
 
@@ -54,8 +55,8 @@ serve(async (req) => {
     const p = profile as ProfileRow;
     if (p.active === false) return json(403, { error: "Account disabled" });
 
-    // Resolve the Auth user's actual email (some projects may not use the synthetic username@themasterspos.app mapping)
-    let authEmail = `${p.username}@themasterspos.app`;
+    // Resolve the Auth user's actual email (some projects may not use the synthetic username@binancexi-pos.app mapping)
+    let authEmail = `${p.username}@binancexi-pos.app`;
     try {
       const { data: authUser, error: authUserErr } = await admin.auth.admin.getUserById(p.id);
       if (!authUserErr && authUser?.user?.email) authEmail = authUser.user.email;
@@ -134,6 +135,7 @@ serve(async (req) => {
         full_name: p.full_name,
         role: p.role,
         permissions: p.permissions || {},
+        business_id: p.business_id,
         active: p.active,
       },
       token_hash: link.properties.hashed_token,

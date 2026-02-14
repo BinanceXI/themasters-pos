@@ -56,15 +56,15 @@ import { getLocalUser, renameLocalUser, upsertLocalUser } from "@/lib/auth/local
 import { supabase } from "@/lib/supabase";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import themastersLogo from "@/assets/themasters-logo.png";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 
 /* ============================
    LOCAL STORAGE KEYS (shared)
 ============================ */
-const TAX_RATE_KEY = "themasters_tax_rate"; // number (percentage)
-const TAX_INCLUDED_KEY = "themasters_tax_included"; // "1" | "0"
-const CURRENCY_KEY = "themasters_currency"; // "USD" | "ZWG" | "ZAR"
-const LOW_STOCK_THRESHOLD_KEY = "themasters_low_stock_threshold"; // number
+const TAX_RATE_KEY = "binancexi_tax_rate"; // number (percentage)
+const TAX_INCLUDED_KEY = "binancexi_tax_included"; // "1" | "0"
+const CURRENCY_KEY = "binancexi_currency"; // "USD" | "ZWG" | "ZAR"
+const LOW_STOCK_THRESHOLD_KEY = "binancexi_low_stock_threshold"; // number
 
 /* ============================
    SECTIONS
@@ -158,7 +158,7 @@ function normalizeTaxRate(v: any) {
 
 function notifySettingsChanged() {
   // POSPage listens to this if you wired it
-  window.dispatchEvent(new Event("themasters_settings_changed"));
+  window.dispatchEvent(new Event("binancexi_settings_changed"));
 }
 
 function syncSettingsToLocalStorage(s: StoreSettings) {
@@ -228,7 +228,7 @@ export const SettingsPage = () => {
     queryKey: ["storeSettings"],
     queryFn: async () => {
       const defaults: StoreSettings = {
-        business_name: "TheMasters",
+        business_name: "Your Business",
         currency: localStorage.getItem(CURRENCY_KEY) || "USD",
         tax_rate: num(localStorage.getItem(TAX_RATE_KEY), 0),
         tax_included: localStorage.getItem(TAX_INCLUDED_KEY) === "1",
@@ -671,7 +671,7 @@ export const SettingsPage = () => {
 
       // Keep local session in sync (username changes affect UI + login)
       setCurrentUser({ ...(currentUser as any), username: nextUsername } as any);
-      localStorage.setItem("themasters_last_username", nextUsername);
+      localStorage.setItem("binancexi_last_username", nextUsername);
 
       setMyNewPassword("");
       setMyNewPassword2("");
@@ -752,7 +752,7 @@ export const SettingsPage = () => {
 
       const a = document.createElement("a");
       a.href = url;
-      a.download = `themasters-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `binancexi-backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
 
       toast.dismiss();
@@ -858,11 +858,7 @@ export const SettingsPage = () => {
         <div className="lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)] lg:overflow-y-auto rounded-2xl bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 p-3">
           {/* Header */}
           <div className="flex items-center gap-3 px-1 mb-3">
-            <img
-              src={themastersLogo}
-              alt="TheMasters"
-              className="h-10 w-auto object-contain"
-            />
+            <BrandLogo className="h-10 w-auto" alt="BinanceXI POS" />
             <div className="leading-tight min-w-0">
               <div className="text-base font-bold text-slate-900 dark:text-white truncate">
                 Settings
@@ -957,14 +953,10 @@ export const SettingsPage = () => {
 
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-xl border border-border">
-                    <img
-                      src={themastersLogo}
-                      alt="Logo"
-                      className="h-12 object-contain"
-                    />
+                    <BrandLogo className="h-12 w-auto" alt="BinanceXI POS" />
                     <div className="min-w-0">
                       <h3 className="font-bold text-lg truncate">
-                        {formData.business_name || "TheMasters"}
+                        {formData.business_name || "Your Business"}
                       </h3>
                       <p className="text-sm text-muted-foreground">
                         System configuration

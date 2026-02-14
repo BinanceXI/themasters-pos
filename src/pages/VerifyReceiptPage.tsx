@@ -15,30 +15,27 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import themastersLogo from "@/assets/themasters-logo.png";
+import { BrandLogo } from "@/components/brand/BrandLogo";
+import { BRAND } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 type OrderItem = {
   product_name: string;
   quantity: number;
   price_at_sale: number;
+  service_note?: string | null;
 };
 
 type OrderRow = {
+  business_name: string;
+  cashier_name: string;
   receipt_id: string;
   receipt_number: string;
-  customer_name: string | null;
   total_amount: number;
   payment_method: string | null;
   status: string | null;
   created_at: string;
-  cashier_id: string | null;
-  order_items: OrderItem[];
-  profiles?: { full_name: string | null } | null;
-};
-
-type StoreRow = {
-  business_name?: string | null;
+  items: OrderItem[];
 };
 
 const prettyStatus = (s?: string | null) => String(s || "unknown").toLowerCase();
@@ -47,7 +44,6 @@ const money = (n: any) => Number(n || 0).toFixed(2);
 export const VerifyReceiptPage = () => {
   const { id } = useParams<{ id: string }>(); // receipt_id
   const [order, setOrder] = useState<OrderRow | null>(null);
-  const [store, setStore] = useState<StoreRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -68,63 +64,32 @@ export const VerifyReceiptPage = () => {
         setLoading(true);
         setErrorMsg(null);
 
-        const { data: storeSettings } = await supabase
-          .from("store_settings")
-          .select("business_name")
-          .maybeSingle();
-
-        setStore((storeSettings as any) || null);
-
-        const { data, error: ordErr } = await supabase
-          .from("orders")
-          .select(
-            `
-            receipt_id,
-            receipt_number,
-            customer_name,
-            total_amount,
-            payment_method,
-            status,
-            created_at,
-            cashier_id,
-            order_items (
-              product_name,
-              quantity,
-              price_at_sale
-            )
-          `
-          )
-          .eq("receipt_id", id)
-          .maybeSingle();
-
-        if (ordErr) {
-          console.error("[verify receipt] orders query error:", ordErr);
+        const { data, error: rpcErr } = await supabase.rpc("verify_receipt", { p_receipt_id: id });
+        if (rpcErr) {
+          console.error("[verify receipt] rpc error:", rpcErr);
           setOrder(null);
-          setErrorMsg(ordErr.message || "query_error");
+          setErrorMsg(rpcErr.message || "query_error");
           return;
         }
 
-        if (!data) {
+        const res = data as any;
+        if (!res || res.ok !== true) {
           setOrder(null);
-          setErrorMsg("not_found");
+          setErrorMsg(String(res?.error || "not_found"));
           return;
-        }
-
-        let cashierFullName: string | null = null;
-        if ((data as any).cashier_id) {
-          const { data: prof, error: profErr } = await supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("id", (data as any).cashier_id)
-            .maybeSingle();
-
-          if (!profErr) cashierFullName = (prof as any)?.full_name ?? null;
         }
 
         setOrder({
-          ...(data as any),
-          profiles: { full_name: cashierFullName },
-        } as any);
+          business_name: String(res.business_name || ""),
+          cashier_name: String(res.cashier_name || ""),
+          receipt_id: String(res.receipt_id || ""),
+          receipt_number: String(res.receipt_number || ""),
+          total_amount: Number(res.total_amount || 0),
+          payment_method: res.payment_method ? String(res.payment_method) : null,
+          status: res.status ? String(res.status) : null,
+          created_at: String(res.created_at || new Date().toISOString()),
+          items: (Array.isArray(res.items) ? res.items : []) as any,
+        });
       } catch (e: any) {
         console.error(e);
         setOrder(null);
@@ -241,18 +206,13 @@ export const VerifyReceiptPage = () => {
           {/* HEADER */}
           <div className={cn("p-6 sm:p-7 text-center bg-gradient-to-b", headerTone)}>
             <div className="flex items-center justify-center gap-3">
-              <div className="h-12 w-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
-                <img
-                  src={themastersLogo}
-                  alt="TheMasters"
-                  className="h-8 w-8 object-contain"
-                  style={{ filter: "brightness(0) invert(1)" }}
-                />
+                <div className="h-12 w-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
+                <BrandLogo className="h-8 w-8 object-contain" alt={BRAND.name} tone="light" />
               </div>
               <div className="text-left">
                 <div className="text-xs text-white/70">Verified by</div>
                 <div className="text-lg font-black text-white leading-tight">
-                  {store?.business_name || "TheMasters"}
+                  {order.business_name || BRAND.name}
                 </div>
               </div>
             </div>
@@ -291,8 +251,8 @@ export const VerifyReceiptPage = () => {
                 })}
                 right
               />
-              <Meta label="Cashier" value={order.profiles?.full_name || "Staff"} />
-              <Meta label="Customer" value={order.customer_name || "Walk-in"} right={false} full />
+              <Meta label="Cashier" value={order.cashier_name || "Staff"} />
+              <Meta label="Customer" value={"Walk-in"} right={false} full />
             </div>
 
             <div className="mt-4">
@@ -309,12 +269,12 @@ export const VerifyReceiptPage = () => {
               <div className="flex items-center justify-between mb-3">
                 <div className="text-sm font-semibold text-white">Items</div>
                 <div className="text-xs text-slate-400">
-                  {order.order_items?.length || 0} line(s)
+                  {order.items?.length || 0} line(s)
                 </div>
               </div>
 
               <div className="space-y-2">
-                {(order.order_items || []).map((it, idx) => {
+                {(order.items || []).map((it, idx) => {
                   const line = Number(it.price_at_sale || 0) * Number(it.quantity || 0);
                   return (
                     <div

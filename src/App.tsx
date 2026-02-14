@@ -12,6 +12,7 @@ import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persist
 import { POSProvider, usePOS } from "./contexts/POSContext";
 import { LoginScreen } from "./components/auth/LoginScreen";
 import { MainLayout } from "./components/layout/MainLayout";
+import { SubscriptionGate } from "./components/billing/SubscriptionGate";
 
 import { VerifyReceiptPage } from "./pages/VerifyReceiptPage";
 import { DashboardPage } from "./pages/Dashboard";
@@ -22,6 +23,7 @@ import { ReceiptsPage } from "./pages/ReceiptsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ProfitAnalysisPage } from "./pages/ProfitAnalysisPage";
 import { ExpensesPage } from "./pages/ExpensesPage";
+import { PlatformAdminPage } from "./pages/PlatformAdminPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -43,6 +45,7 @@ const persister = createSyncStoragePersister({
 
 const AppRoutes = () => {
   const { currentUser } = usePOS();
+  const role = (currentUser as any)?.role;
 
   return (
     <Routes>
@@ -52,6 +55,19 @@ const AppRoutes = () => {
       {/* ✅ Auth gate */}
       {!currentUser ? (
         <Route path="*" element={<LoginScreen onLogin={() => {}} />} />
+      ) : role === "platform_admin" ? (
+        <>
+          <Route path="/" element={<Navigate to="/platform" replace />} />
+          <Route
+            path="/platform"
+            element={
+              <MainLayout>
+                <PlatformAdminPage />
+              </MainLayout>
+            }
+          />
+          <Route path="*" element={<Navigate to="/platform" replace />} />
+        </>
       ) : (
         <>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -59,65 +75,81 @@ const AppRoutes = () => {
           <Route
             path="/dashboard"
             element={
-              <MainLayout>
-                <DashboardPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <DashboardPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/pos"
             element={
-              <MainLayout>
-                <POSPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <POSPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/inventory"
             element={
-              <MainLayout>
-                <InventoryPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <InventoryPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/profit"
             element={
-              <MainLayout>
-                <ProfitAnalysisPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <ProfitAnalysisPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/receipts"
             element={
-              <MainLayout>
-                <ReceiptsPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <ReceiptsPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/reports"
             element={
-              <MainLayout>
-                <ReportsPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <ReportsPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/expenses"
             element={
-              <MainLayout>
-                <ExpensesPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <ExpensesPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
           <Route
             path="/settings"
             element={
-              <MainLayout>
-                <SettingsPage />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <SettingsPage />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
 
@@ -125,9 +157,11 @@ const AppRoutes = () => {
           <Route
             path="*"
             element={
-              <MainLayout>
-                <NotFound />
-              </MainLayout>
+              <SubscriptionGate>
+                <MainLayout>
+                  <NotFound />
+                </MainLayout>
+              </SubscriptionGate>
             }
           />
         </>
@@ -138,7 +172,7 @@ const AppRoutes = () => {
 
 const App = () => {
   useEffect(() => {
-    const saved = localStorage.getItem("themasters_theme");
+    const saved = localStorage.getItem("binancexi_theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const shouldUseDark = saved ? saved === "dark" : prefersDark;
     document.documentElement.classList.toggle("dark", shouldUseDark);
@@ -150,7 +184,7 @@ const App = () => {
       persistOptions={{
         persister,
         maxAge: 1000 * 60 * 60 * 24 * 7,
-        buster: "themasters-v1",
+        buster: "binancexi-v1",
       }}
     >
       <TooltipProvider>

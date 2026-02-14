@@ -24,8 +24,8 @@ import { cn } from '@/lib/utils';
 import { listExpenses } from '@/lib/expenses';
 import { listLocalServiceBookings, type LocalServiceBooking } from '@/lib/serviceBookings';
 
-const OFFLINE_QUEUE_KEY = 'themasters_offline_queue';
-const ORDERS_CACHE_KEY = 'themasters_orders_cache_v1';
+const OFFLINE_QUEUE_KEY = 'binancexi_offline_queue';
+const ORDERS_CACHE_KEY = 'binancexi_orders_cache_v1';
 
 type OrderItemRow = {
   quantity: number;
