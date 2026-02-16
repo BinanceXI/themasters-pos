@@ -16,6 +16,40 @@ function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
+async function waitForBluetoothSerial(timeoutMs = 3500) {
+  if (typeof window === "undefined") return null;
+  if (window.bluetoothSerial) return window.bluetoothSerial;
+
+  return await new Promise<any>((resolve) => {
+    let done = false;
+    const finish = (bt: any) => {
+      if (done) return;
+      done = true;
+      try {
+        clearTimeout(t);
+        clearInterval(poll);
+        document.removeEventListener("deviceready", onReady);
+      } catch {
+        // ignore
+      }
+      resolve(bt);
+    };
+
+    const onReady = () => finish(window.bluetoothSerial || null);
+    try {
+      document.addEventListener("deviceready", onReady, { once: true });
+    } catch {
+      // ignore
+    }
+
+    const poll = setInterval(() => {
+      if (window.bluetoothSerial) finish(window.bluetoothSerial);
+    }, 50);
+
+    const t = setTimeout(() => finish(window.bluetoothSerial || null), timeoutMs);
+  });
+}
+
 function withTimeout<T>(p: Promise<T>, timeoutMs: number, msg: string) {
   let t: any;
   const timeout = new Promise<T>((_, reject) => {
@@ -44,6 +78,14 @@ function pickPrinter(devices: any[]) {
 
 async function btList(bt: any) {
   return await new Promise<any[]>((resolve, reject) => bt.list(resolve, reject));
+}
+
+async function btIsEnabled(bt: any) {
+  return await new Promise<boolean>((resolve) => bt.isEnabled(() => resolve(true), () => resolve(false)));
+}
+
+async function btEnable(bt: any) {
+  return await new Promise<void>((resolve, reject) => bt.enable(resolve, reject));
 }
 
 async function btDisconnect(bt: any) {
@@ -97,6 +139,7 @@ async function btWrite(bt: any, data: ArrayBuffer) {
 }
 
 export type BluetoothPrintOptions = {
+  address?: string; // explicit paired printer address
   chunkSize?: number; // bytes (512–1024 recommended)
   chunkDelayMs?: number;
   retries?: number;
@@ -107,23 +150,49 @@ export async function printToBluetooth58mm(data: Uint8Array, opts: BluetoothPrin
     throw new Error("Bluetooth printing only supported on Android app");
   }
 
-  const bt = window.bluetoothSerial;
+  const bt = (await waitForBluetoothSerial()) || (window as any).bluetoothSerial;
   if (!bt) throw new Error("Bluetooth plugin missing (cordova-plugin-bluetooth-serial)");
+
+  const enabled = await btIsEnabled(bt);
+  if (!enabled) {
+    try {
+      await withTimeout(btEnable(bt), 20_000, "Bluetooth enable timed out");
+    } catch (e: any) {
+      throw new Error(e?.message || "Bluetooth is off. Enable Bluetooth and try again.");
+    }
+  }
 
   const chunkSize = Math.max(512, Math.min(1024, Math.trunc(opts.chunkSize ?? 800)));
   const chunkDelayMs = Math.max(5, Math.trunc(opts.chunkDelayMs ?? 35));
   const retries = Math.max(1, Math.trunc(opts.retries ?? 3));
 
-  const devices = await btList(bt);
-  if (!devices?.length) {
-    throw new Error("No paired Bluetooth devices found. Pair the printer in Android settings first.");
+  const requestedAddress = String(opts.address || "").trim();
+
+  let address = requestedAddress;
+  let printerName = "";
+
+  if (!address) {
+    const devices = await btList(bt);
+    if (!devices?.length) {
+      throw new Error("No paired Bluetooth devices found. Pair the printer in Android settings first.");
+    }
+    const printer = pickPrinter(devices);
+    address = String(printer?.address || "").trim();
+    printerName = String(printer?.name || "").trim();
+    if (!address) throw new Error("Printer address not found. Pair the printer again in Android settings.");
+  } else {
+    // Best-effort: resolve name for error messages
+    try {
+      const devices = await btList(bt);
+      const m = (devices || []).find((d: any) => String(d?.address || "") === address);
+      printerName = String(m?.name || "").trim();
+    } catch {
+      // ignore
+    }
   }
 
-  const printer = pickPrinter(devices);
-  const address = String(printer?.address || "").trim();
-  if (!address) throw new Error("Printer address not found. Pair the printer again in Android settings.");
-
   let lastErr: any = null;
+  let attemptChunkSize = chunkSize;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -131,8 +200,8 @@ export async function printToBluetooth58mm(data: Uint8Array, opts: BluetoothPrin
       await btDisconnect(bt);
       await btConnect(bt, address);
 
-      for (let i = 0; i < data.length; i += chunkSize) {
-        const chunk = data.slice(i, i + chunkSize); // creates a new buffer
+      for (let i = 0; i < data.length; i += attemptChunkSize) {
+        const chunk = data.slice(i, i + attemptChunkSize); // creates a new buffer
         await btWrite(bt, chunk.buffer);
         await sleep(chunkDelayMs);
       }
@@ -145,9 +214,13 @@ export async function printToBluetooth58mm(data: Uint8Array, opts: BluetoothPrin
     } catch (e: any) {
       lastErr = e;
       await btDisconnect(bt);
+      if (attempt === 1 && attemptChunkSize > 512) {
+        attemptChunkSize = 512;
+      }
       await sleep(250 * attempt);
     }
   }
 
-  throw new Error(lastErr?.message || "Bluetooth print failed");
+  const target = printerName ? `${printerName} (${address})` : address;
+  throw new Error(lastErr?.message ? `Bluetooth print failed (${target}): ${lastErr.message}` : `Bluetooth print failed (${target})`);
 }

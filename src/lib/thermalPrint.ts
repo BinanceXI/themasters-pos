@@ -7,6 +7,8 @@ import { printToBluetooth58mm } from "@/lib/androidBluetoothPrint";
 export const PRINTER_MODE_KEY = "themasters_printer_mode"; // "browser" | "tcp" | "bt"
 export const PRINTER_IP_KEY = "themasters_printer_ip"; // e.g. 192.168.1.50
 export const PRINTER_PORT_KEY = "themasters_printer_port"; // usually 9100
+export const PRINTER_SERIAL_PORT_KEY = "themasters_printer_serial_port"; // e.g. COM5
+export const PRINTER_SERIAL_BAUD_KEY = "themasters_printer_serial_baud"; // e.g. 9600
 
 const encoder = new TextEncoder();
 const ESC = 0x1b;
@@ -28,7 +30,11 @@ function isTauriRuntime() {
   );
 }
 
-function normalizePrinterMode(rawMode: string, platform: string): "browser" | "tcp" | "bt" {
+function normalizePrinterMode(
+  rawMode: string,
+  platform: string,
+  tauriRuntime: boolean
+): "browser" | "tcp" | "bt" {
   const mode = String(rawMode || "").trim().toLowerCase();
   if (platform === "android") {
     if (mode === "tcp" || mode === "bt") return mode;
@@ -36,6 +42,7 @@ function normalizePrinterMode(rawMode: string, platform: string): "browser" | "t
   }
   // desktop/web
   if (mode === "browser" || mode === "tcp") return mode;
+  if (mode === "bt" && tauriRuntime) return "bt";
   return "browser";
 }
 
@@ -405,7 +412,25 @@ async function sendTcpDesktopViaTauri(ip: string, port: number, data: Uint8Array
   }
 }
 
-export async function printReceiptSmart(d: ThermalReceiptData) {
+async function sendSerialDesktopViaTauri(port: string, baudRate: number, data: Uint8Array) {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("serial_print_escpos", { port, baud_rate: baudRate, data: Array.from(data) });
+  } catch (e: any) {
+    throw new Error(e?.message || "Tauri serial print failed");
+  }
+}
+
+export type PrinterOverrides = {
+  mode?: "browser" | "tcp" | "bt";
+  ip?: string;
+  port?: number;
+  androidBtAddress?: string;
+  desktopSerialPort?: string;
+  desktopSerialBaud?: number;
+};
+
+export async function printReceiptSmart(d: ThermalReceiptData, overrides: PrinterOverrides = {}) {
   const platform = Capacitor.getPlatform();
   const tauriRuntime = isTauriRuntime();
 
@@ -413,38 +438,67 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
   // - Android -> bt (no popup)
   // - Desktop -> browser
   const storedMode = (localStorage.getItem(PRINTER_MODE_KEY) || "").trim();
-  let mode = normalizePrinterMode(storedMode || (platform === "android" ? "bt" : "browser"), platform);
+  const desiredMode = (overrides.mode || storedMode || (platform === "android" ? "bt" : "browser")).trim();
+  let mode = normalizePrinterMode(desiredMode, platform, tauriRuntime);
+
+  const ip =
+    overrides.ip != null
+      ? String(overrides.ip).trim()
+      : (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
+  const portRaw = overrides.port ?? (localStorage.getItem(PRINTER_PORT_KEY) || "9100");
+  const port = Number(portRaw);
+  const tcpPort = Number.isFinite(port) && port > 0 ? port : 9100;
+  const serialPort = overrides.desktopSerialPort != null
+    ? String(overrides.desktopSerialPort).trim()
+    : (localStorage.getItem(PRINTER_SERIAL_PORT_KEY) || "").trim();
+  const serialBaudRaw =
+    overrides.desktopSerialBaud ?? (localStorage.getItem(PRINTER_SERIAL_BAUD_KEY) || "9600");
+  const serialBaud = Number(serialBaudRaw);
+  const serialBaudRate = Number.isFinite(serialBaud) && serialBaud > 0 ? serialBaud : 9600;
 
   const escpos = buildEscPos(d);
 
   // ✅ ANDROID
   if (platform === "android") {
     if (mode === "bt") {
-      await printToBluetooth58mm(escpos, { chunkSize: 800, chunkDelayMs: 35, retries: 3 });
+      await printToBluetooth58mm(escpos, {
+        address: overrides.androidBtAddress,
+        chunkSize: 800,
+        chunkDelayMs: 35,
+        retries: 3,
+      });
       return;
     }
 
     // tcp mode
-    const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
-    const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
     if (!ip) {
       // Safe fallback: many devices are configured for BT but left on TCP accidentally.
-      await printToBluetooth58mm(escpos, { chunkSize: 800, chunkDelayMs: 35, retries: 3 });
+      await printToBluetooth58mm(escpos, {
+        address: overrides.androidBtAddress,
+        chunkSize: 800,
+        chunkDelayMs: 35,
+        retries: 3,
+      });
       return;
     }
-    await sendTcp(ip, port, escpos);
+    await sendTcp(ip, tcpPort, escpos);
     return;
   }
 
   // ✅ DESKTOP / WINDOWS
+  if (mode === "bt") {
+    if (!tauriRuntime) throw new Error("Bluetooth (COM) printing requires the Windows app");
+    if (!serialPort) throw new Error("COM port not set for Bluetooth mode");
+    await sendSerialDesktopViaTauri(serialPort, serialBaudRate, escpos);
+    return;
+  }
+
   if (mode === "browser") {
     // Windows app: if IP is configured, prefer native TCP print first.
     if (tauriRuntime) {
-      const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
-      const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
       if (ip) {
         try {
-          await sendTcpDesktopViaTauri(ip, port, escpos);
+          await sendTcpDesktopViaTauri(ip, tcpPort, escpos);
           return;
         } catch (e) {
           console.warn("[print] tauri tcp from browser-mode failed, falling back to browser print:", e);
@@ -456,8 +510,6 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
   }
 
   if (mode === "tcp") {
-    const ip = (localStorage.getItem(PRINTER_IP_KEY) || "").trim();
-    const port = Number(localStorage.getItem(PRINTER_PORT_KEY) || "9100");
     if (!ip) {
       if (tauriRuntime) throw new Error("Printer IP not set for TCP mode");
       await printBrowserReceipt(d);
@@ -466,7 +518,7 @@ export async function printReceiptSmart(d: ThermalReceiptData) {
 
     // Silent thermal print in Tauri desktop.
     if (tauriRuntime) {
-      await sendTcpDesktopViaTauri(ip, port, escpos);
+      await sendTcpDesktopViaTauri(ip, tcpPort, escpos);
       return;
     }
 

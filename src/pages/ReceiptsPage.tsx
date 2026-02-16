@@ -35,7 +35,10 @@ import {
   PRINTER_MODE_KEY,
   PRINTER_IP_KEY,
   PRINTER_PORT_KEY,
+  PRINTER_SERIAL_PORT_KEY,
+  PRINTER_SERIAL_BAUD_KEY,
   printReceiptSmart,
+  type PrinterOverrides,
 } from "@/lib/thermalPrint";
 
 import { tryPrintThermalQueue } from "@/lib/thermalPrint";
@@ -44,6 +47,24 @@ import { tryPrintThermalQueue } from "@/lib/thermalPrint";
 // Offline queue helpers
 // --------------------
 const OFFLINE_QUEUE_KEY = "themasters_offline_queue";
+const ANDROID_BT_ADDRESS_KEY = "themasters_printer_bt_address";
+
+type SerialPortDto = {
+  port_name: string;
+  port_type: string;
+  manufacturer?: string | null;
+  product?: string | null;
+  serial_number?: string | null;
+  vid?: number | null;
+  pid?: number | null;
+};
+
+function isTauriRuntime() {
+  if (typeof window === "undefined") return false;
+  const w = window as any;
+  const ua = String(window.navigator?.userAgent || "");
+  return Boolean(w.__TAURI_INTERNALS__ || w.__TAURI__ || w.__TAURI_IPC__ || ua.includes("Tauri"));
+}
 
 function safeJSONParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -167,6 +188,7 @@ export const ReceiptsPage = () => {
   const queryClient = useQueryClient();
   const platform = Capacitor.getPlatform();
   const isAndroid = platform === "android";
+  const tauriRuntime = isTauriRuntime();
   // 🔥 AUTO-RUN THERMAL QUEUE
 useEffect(() => {
   tryPrintThermalQueue();
@@ -181,9 +203,12 @@ useEffect(() => {
   const [activeTab, setActiveTab] = useState<"settings" | "receipts">("settings");
   // 🔥 PRINTER SETTINGS
 const normalizePrinterMode = (raw: string | null) => {
-  const mode = String(raw || "").trim();
+  const mode = String(raw || "").trim().toLowerCase();
   if (mode === "browser" || mode === "tcp") return mode;
-  if (isAndroid && mode === "bt") return "bt";
+  if (mode === "bt") {
+    if (isAndroid) return "bt";
+    if (tauriRuntime) return "bt";
+  }
   return isAndroid ? "bt" : "browser";
 };
 const [printerMode, setPrinterMode] = useState(
@@ -196,6 +221,17 @@ const [printerPort, setPrinterPort] = useState(
   localStorage.getItem(PRINTER_PORT_KEY) || "9100"
 );
 
+  // 🔥 BLUETOOTH (ANDROID)
+  const [btAddress, setBtAddress] = useState(localStorage.getItem(ANDROID_BT_ADDRESS_KEY) || "");
+  const [btDevices, setBtDevices] = useState<any[]>([]);
+  const [btBusy, setBtBusy] = useState(false);
+
+  // 🔥 BLUETOOTH (WINDOWS / TAURI SERIAL)
+  const [serialPorts, setSerialPorts] = useState<SerialPortDto[]>([]);
+  const [serialPortName, setSerialPortName] = useState(localStorage.getItem(PRINTER_SERIAL_PORT_KEY) || "");
+  const [serialBaud, setSerialBaud] = useState(localStorage.getItem(PRINTER_SERIAL_BAUD_KEY) || "9600");
+  const [serialBusy, setSerialBusy] = useState(false);
+
   // Preview uses stable fake receipt id + number
   const [previewReceiptId] = useState(
     // @ts-ignore
@@ -207,14 +243,14 @@ const [printerPort, setPrinterPort] = useState(
   const [printData, setPrintData] = useState<PrintData | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
 
-  const runReprint = useCallback(async (data: PrintData) => {
+  const runReprint = useCallback(async (data: PrintData, overrides?: PrinterOverrides) => {
     setPrintData(data);
     setIsPrinting(true);
     try {
       // Let React commit #receipt-print-area before printer pipeline reads it.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await printReceiptSmart(toThermalPayload(data));
+      await printReceiptSmart(toThermalPayload(data), overrides);
       toast.success("Print sent");
     } catch (e: any) {
       toast.error(e?.message || "Print failed");
@@ -222,6 +258,74 @@ const [printerPort, setPrinterPort] = useState(
       setTimeout(() => setIsPrinting(false), 700);
     }
   }, []);
+
+  const refreshBtDevices = useCallback(async () => {
+    if (!isAndroid) return;
+    const bt = (window as any)?.bluetoothSerial;
+    if (!bt) {
+      toast.error("Bluetooth plugin not available. Restart the Android app.");
+      return;
+    }
+
+    setBtBusy(true);
+    try {
+      const enabled = await new Promise<boolean>((resolve) => bt.isEnabled(() => resolve(true), () => resolve(false)));
+      if (!enabled) {
+        setBtDevices([]);
+        toast.error("Bluetooth is off. Tap Enable Bluetooth.");
+        return;
+      }
+
+      const devices = await new Promise<any[]>((resolve, reject) => bt.list(resolve, reject));
+      setBtDevices(Array.isArray(devices) ? devices : []);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to load paired Bluetooth devices");
+    } finally {
+      setBtBusy(false);
+    }
+  }, [isAndroid]);
+
+  const enableBluetooth = useCallback(async () => {
+    if (!isAndroid) return;
+    const bt = (window as any)?.bluetoothSerial;
+    if (!bt) {
+      toast.error("Bluetooth plugin not available. Restart the Android app.");
+      return;
+    }
+
+    setBtBusy(true);
+    try {
+      await new Promise<void>((resolve, reject) => bt.enable(resolve, reject));
+      toast.success("Bluetooth enabled");
+      await refreshBtDevices();
+    } catch (e: any) {
+      toast.error(e?.message || "Enable Bluetooth failed");
+    } finally {
+      setBtBusy(false);
+    }
+  }, [isAndroid, refreshBtDevices]);
+
+  const refreshSerialPorts = useCallback(async () => {
+    if (!tauriRuntime) return;
+    setSerialBusy(true);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const ports = await invoke<SerialPortDto[]>("serial_list_ports");
+      setSerialPorts(Array.isArray(ports) ? ports : []);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to list COM ports");
+    } finally {
+      setSerialBusy(false);
+    }
+  }, [tauriRuntime]);
+
+  useEffect(() => {
+    if (isAndroid && printerMode === "bt") refreshBtDevices();
+  }, [isAndroid, printerMode, refreshBtDevices]);
+
+  useEffect(() => {
+    if (!isAndroid && tauriRuntime && printerMode === "bt") refreshSerialPorts();
+  }, [isAndroid, tauriRuntime, printerMode, refreshSerialPorts]);
   useEffect(() => {
   if (activeTab !== "receipts") return;
 
@@ -302,9 +406,24 @@ const [printerPort, setPrinterPort] = useState(
 const savePrinterSettings = () => {
   const nextMode = normalizePrinterMode(printerMode);
   if (nextMode !== printerMode) setPrinterMode(nextMode);
+
+  if (nextMode === "bt") {
+    if (isAndroid && !btAddress) {
+      toast.error("Select a paired Bluetooth printer first.");
+      return;
+    }
+    if (!isAndroid && tauriRuntime && !serialPortName) {
+      toast.error("Select a COM port first.");
+      return;
+    }
+  }
+
   localStorage.setItem(PRINTER_MODE_KEY, nextMode);
   localStorage.setItem(PRINTER_IP_KEY, printerIp);
   localStorage.setItem(PRINTER_PORT_KEY, printerPort);
+  localStorage.setItem(PRINTER_SERIAL_PORT_KEY, serialPortName);
+  localStorage.setItem(PRINTER_SERIAL_BAUD_KEY, serialBaud);
+  localStorage.setItem(ANDROID_BT_ADDRESS_KEY, btAddress);
 
   toast.success("Printer settings saved");
   tryPrintThermalQueue(); // 🔥 PRINT ANY QUEUED RECEIPTS
@@ -312,6 +431,27 @@ const savePrinterSettings = () => {
 
 // 🔥 TEST THERMAL PRINT
 const testThermalPrint = async () => {
+  const nextMode = normalizePrinterMode(printerMode);
+  if (nextMode === "bt") {
+    if (isAndroid && !btAddress) {
+      toast.error("Select a paired Bluetooth printer first.");
+      return;
+    }
+    if (!isAndroid && tauriRuntime && !serialPortName) {
+      toast.error("Select a COM port first.");
+      return;
+    }
+  }
+
+  const overrides: PrinterOverrides = {
+    mode: nextMode,
+    ip: printerIp,
+    port: Number(printerPort),
+    androidBtAddress: btAddress,
+    desktopSerialPort: serialPortName,
+    desktopSerialBaud: Number(serialBaud),
+  };
+
   await runReprint({
     cart: [
       {
@@ -333,7 +473,7 @@ const testThermalPrint = async () => {
     receiptId: "test-receipt-id",
     receiptNumber: "TEST-0001",
     paymentMethod: "cash",
-  });
+  }, overrides);
 };
 
   // preview verify link (HashRouter safe)
@@ -671,54 +811,145 @@ const testThermalPrint = async () => {
             >
               <SettingsCard title="Store Identity" icon={Settings2}>
                {/* ✅ THERMAL PRINTER SETTINGS */}
-<SettingsCard title="Thermal Printer" icon={Printer}>
-  <div className="space-y-4">
+                <SettingsCard title="Thermal Printer" icon={Printer}>
+                  <div className="space-y-4">
+                    <Field label="Printer Mode">
+                      <select
+                        value={printerMode}
+                        onChange={(e) => setPrinterMode(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
+                        disabled={!isAdmin}
+                      >
+                        {isAndroid && <option value="bt">Bluetooth (Android)</option>}
+                        {!isAndroid && tauriRuntime && <option value="bt">Bluetooth (Windows)</option>}
+                        <option value="tcp">Thermal (LAN / Wi-Fi)</option>
+                        <option value="browser">Browser (Fallback)</option>
+                      </select>
+                    </Field>
 
-    <Field label="Printer Mode">
-      <select
-        value={printerMode}
-        onChange={(e) => setPrinterMode(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
-        disabled={!isAdmin}
-      >
-        {isAndroid && <option value="bt">Bluetooth (Android)</option>}
-        <option value="tcp">Thermal (LAN / Wi-Fi)</option>
-        <option value="browser">Browser (Fallback)</option>
-      </select>
-    </Field>
+                    {/* Android Bluetooth */}
+                    {printerMode === "bt" && isAndroid ? (
+                      <div className="space-y-3">
+                        <Field label="Paired Bluetooth Printer">
+                          <select
+                            value={btAddress}
+                            onChange={(e) => setBtAddress(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
+                            disabled={!isAdmin || btBusy}
+                          >
+                            <option value="">Select a paired printer</option>
+                            {btDevices.map((d: any) => {
+                              const addr = String(d?.address || "");
+                              const name = String(d?.name || addr || "Printer");
+                              return (
+                                <option key={addr || name} value={addr}>
+                                  {name}{addr ? ` (${addr})` : ""}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </Field>
 
-    <Field label="Printer IP">
-      <Input
-        value={printerIp}
-        onChange={(e) => setPrinterIp(e.target.value)}
-        placeholder="192.168.1.100"
-        className="bg-slate-950 border-slate-800 text-white"
-        disabled={!isAdmin}
-      />
-    </Field>
+                        <div className="flex gap-2">
+                          <Button onClick={enableBluetooth} variant="outline" className="flex-1" disabled={btBusy}>
+                            Enable Bluetooth
+                          </Button>
+                          <Button onClick={refreshBtDevices} variant="outline" className="flex-1" disabled={btBusy}>
+                            Refresh Devices
+                          </Button>
+                        </div>
 
-    <Field label="Printer Port">
-      <Input
-        value={printerPort}
-        onChange={(e) => setPrinterPort(e.target.value)}
-        placeholder="9100"
-        className="bg-slate-950 border-slate-800 text-white"
-        disabled={!isAdmin}
-      />
-    </Field>
+                        {!btDevices.length && (
+                          <p className="text-xs text-slate-400">
+                            Pair the printer in Android Bluetooth settings first, then tap Refresh Devices.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
 
-    <div className="flex gap-2">
-      <Button onClick={savePrinterSettings} className="flex-1" disabled={!isAdmin}>
-        Save Printer
-      </Button>
+                    {/* Windows Bluetooth (COM / SPP) */}
+                    {printerMode === "bt" && !isAndroid && tauriRuntime ? (
+                      <div className="space-y-3">
+                        <Field label="COM Port">
+                          <select
+                            value={serialPortName}
+                            onChange={(e) => setSerialPortName(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
+                            disabled={!isAdmin || serialBusy}
+                          >
+                            <option value="">Select COM port</option>
+                            {serialPorts.map((p) => (
+                              <option key={p.port_name} value={p.port_name}>
+                                {p.port_name}
+                                {p.product ? ` - ${p.product}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
 
-      <Button onClick={testThermalPrint} variant="outline" className="flex-1">
-        Test Print
-      </Button>
-    </div>
+                        <Field label="Baud Rate">
+                          <select
+                            value={serialBaud}
+                            onChange={(e) => setSerialBaud(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 text-white p-2 rounded"
+                            disabled={!isAdmin || serialBusy}
+                          >
+                            {["9600", "19200", "38400", "57600", "115200"].map((b) => (
+                              <option key={b} value={b}>
+                                {b}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
 
-  </div>
-</SettingsCard>
+                        <Button onClick={refreshSerialPorts} variant="outline" disabled={serialBusy}>
+                          Refresh Ports
+                        </Button>
+
+                        {!serialPorts.length && (
+                          <p className="text-xs text-slate-400">
+                            Pair the printer in Windows Bluetooth settings, then select the outgoing COM port (SPP).
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {/* LAN/TCP fields */}
+                    {printerMode !== "bt" ? (
+                      <>
+                        <Field label="Printer IP">
+                          <Input
+                            value={printerIp}
+                            onChange={(e) => setPrinterIp(e.target.value)}
+                            placeholder="192.168.1.100"
+                            className="bg-slate-950 border-slate-800 text-white"
+                            disabled={!isAdmin}
+                          />
+                        </Field>
+
+                        <Field label="Printer Port">
+                          <Input
+                            value={printerPort}
+                            onChange={(e) => setPrinterPort(e.target.value)}
+                            placeholder="9100"
+                            className="bg-slate-950 border-slate-800 text-white"
+                            disabled={!isAdmin}
+                          />
+                        </Field>
+                      </>
+                    ) : null}
+
+                    <div className="flex gap-2">
+                      <Button onClick={savePrinterSettings} className="flex-1" disabled={!isAdmin}>
+                        Save Printer
+                      </Button>
+
+                      <Button onClick={testThermalPrint} variant="outline" className="flex-1">
+                        Test Print
+                      </Button>
+                    </div>
+                  </div>
+                </SettingsCard>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field label="Business Name">
                     <Input
