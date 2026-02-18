@@ -54,6 +54,7 @@ import { usePOS } from "@/contexts/POSContext";
 import { hashPassword } from "@/lib/auth/passwordKdf";
 import { getLocalUser, renameLocalUser, upsertLocalUser } from "@/lib/auth/localUserStore";
 import { supabase } from "@/lib/supabase";
+import { EXPECTED_SUPABASE_REFS, getBackendInfo } from "@/lib/backendInfo";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import themastersLogo from "@/assets/themasters-logo.png";
@@ -175,6 +176,10 @@ function syncSettingsToLocalStorage(s: StoreSettings) {
 export const SettingsPage = () => {
   const { currentUser, setCurrentUser } = usePOS();
   const queryClient = useQueryClient();
+
+  const backendInfo = useMemo(() => getBackendInfo(), []);
+  const expectedRefs = EXPECTED_SUPABASE_REFS as readonly string[];
+  const backendOk = !!backendInfo.supabaseRef && expectedRefs.includes(backendInfo.supabaseRef);
 
   const isAdmin = currentUser?.role === "admin";
   const canAccessSettings =
@@ -1614,6 +1619,45 @@ export const SettingsPage = () => {
 	                  </div>
 	                </CardContent>
 	              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Backend</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="text-sm">
+                    Supabase URL:{" "}
+                    <span className="font-mono text-xs break-all">
+                      {backendInfo.supabaseUrl || "NOT SET"}
+                    </span>
+                  </div>
+
+                  <div className="text-sm">
+                    Project ref:{" "}
+                    <span
+                      className={cn(
+                        "font-mono text-xs",
+                        backendOk ? "text-emerald-500" : "text-red-400"
+                      )}
+                    >
+                      {backendInfo.supabaseRef || "UNKNOWN"}
+                    </span>
+                    {!backendOk && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Expected: <span className="font-mono">{expectedRefs.join(", ")}</span>. If
+                        this is wrong, fix `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` in your
+                        build environment and redeploy/rebuild.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-muted-foreground font-mono">
+                    mode={backendInfo.mode || "unknown"}
+                    {backendInfo.appVersion ? `  version=${backendInfo.appVersion}` : ""}
+                    {backendInfo.appCommit ? `  commit=${backendInfo.appCommit.slice(0, 7)}` : ""}
+                  </div>
+                </CardContent>
+              </Card>
 	            </motion.div>
 	          )}
 
