@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { QRCodeSVG } from "qrcode.react";
 import type { CartItem, Discount } from "@/types/pos";
+import brandLogo from "@/assets/brand/logo-b25d-dark.png";
 import { buildVerifyUrl } from "@/lib/verifyUrl";
-import { BRAND } from "@/lib/brand";
 
 type DiscountType = "percentage" | "fixed";
 
@@ -113,16 +113,12 @@ export const PrintableReceipt = forwardRef<HTMLDivElement, ReceiptProps>((props,
     >
       {/* HEADER */}
       <div className="text-center mb-2">
-        <div className="mb-1">
-          <div className="font-black text-[12px] uppercase tracking-[0.22em] leading-none">
-            {BRAND.receiptTitleLines.map((line) => (
-              <div key={line}>{line}</div>
-            ))}
-          </div>
-          {BRAND.supportLine ? (
-            <div className="text-[8px] font-bold uppercase mt-1">{BRAND.supportLine}</div>
-          ) : null}
-        </div>
+        <img
+          src={brandLogo}
+          alt="BinanceXI POS"
+          className="h-10 mx-auto mb-1 object-contain"
+          style={{ filter: "grayscale(100%) contrast(200%)" }}
+        />
 
         <h2 className="font-black text-[18px] uppercase leading-none mb-0.5">
           {(settings as any)?.business_name || "Your Business"}

@@ -1,5 +1,5 @@
 -- BinanceXI watermark
--- BinanceXI POS baseline schema (reconstructed)
+-- Kendrick Tech Services baseline schema (reconstructed)
 -- TODO: export real schema via `supabase db dump` from the target project and replace/merge as needed.
 -- This migration is based on app code + `supabase/snippets/*` and may be missing RLS policies, grants,
 -- storage buckets, and other production-only objects.

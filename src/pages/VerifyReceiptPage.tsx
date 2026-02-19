@@ -15,7 +15,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { BrandMark } from "@/components/brand/BrandLogo";
+import { BrandLogo } from "@/components/brand/BrandLogo";
 import { BRAND } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
@@ -206,11 +206,8 @@ export const VerifyReceiptPage = () => {
           {/* HEADER */}
           <div className={cn("p-6 sm:p-7 text-center bg-gradient-to-b", headerTone)}>
             <div className="flex items-center justify-center gap-3">
-              <div className="h-12 w-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
-                <BrandMark
-                  className="h-8 w-8 bg-transparent border-white/20 text-white"
-                  title={BRAND.name}
-                />
+                <div className="h-12 w-12 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center">
+                <BrandLogo className="h-8 w-8 object-contain" alt={BRAND.name} tone="light" />
               </div>
               <div className="text-left">
                 <div className="text-xs text-white/70">Verified by</div>
