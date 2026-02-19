@@ -43,7 +43,7 @@ export const TopBar = () => {
     setIsDark(document.documentElement.classList.contains("dark"));
     try {
       localStorage.setItem(
-        "binancexi_theme",
+        "themasters_theme",
         document.documentElement.classList.contains("dark") ? "dark" : "light"
       );
     } catch {}
@@ -59,7 +59,7 @@ export const TopBar = () => {
 
     // Always clear local user (offline-first)
     try {
-      localStorage.removeItem("binancexi_user");
+      localStorage.removeItem("themasters_user");
       // clear any supabase tokens if present (safe)
       Object.keys(localStorage).forEach((k) => {
         if (k.startsWith("sb-") && k.endsWith("-auth-token")) localStorage.removeItem(k);

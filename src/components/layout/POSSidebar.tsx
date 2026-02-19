@@ -13,14 +13,11 @@ import {
   ChevronLeft,
   ChevronRight,
   PieChart,
-  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePOS } from "@/contexts/POSContext";
-import { BRAND } from "@/lib/brand";
 
 const navItems = [
-  { path: "/platform", label: "Admin", icon: Shield },
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/pos", label: "Point of Sale", icon: ShoppingCart },
   { path: "/inventory", label: "Inventory", icon: Package },
@@ -37,18 +34,16 @@ export const POSSidebar = () => {
   const { currentUser } = usePOS();
 
   const role = (currentUser as any)?.role;
-  const isPlatform = role === "platform_admin";
   const isAdmin = role === "admin";
   const isCashier = role === "cashier";
 
   // ✅ Cashier sees ONLY POS
   const visibleItems = useMemo(() => {
     if (!currentUser) return [];
-    if (isPlatform) return navItems.filter((i) => i.path === "/platform");
     if (isCashier) return navItems.filter((i) => i.path === "/pos");
-    if (isAdmin) return navItems.filter((i) => i.path !== "/platform");
+    if (isAdmin) return navItems;
     return navItems.filter((i) => i.path === "/pos");
-  }, [currentUser, isAdmin, isCashier, isPlatform]);
+  }, [currentUser, isAdmin, isCashier]);
 
   const displayName =
     (currentUser as any)?.full_name ||
@@ -75,16 +70,14 @@ export const POSSidebar = () => {
             {!collapsed ? (
               <div className="min-w-0">
                 <div className="text-white font-semibold text-[15px] tracking-tight leading-tight">
-                  {BRAND.name}
+                  TheMasters POS
                 </div>
                 <div className="text-white/55 text-[12px] mt-0.5 truncate">
                   {displayName} • {role || "—"}
                 </div>
               </div>
             ) : (
-              <div className="text-white font-bold text-[13px] tracking-tight leading-none">
-                {String(BRAND.shortName || BRAND.name || "BX").trim().slice(0, 2).toUpperCase()}
-              </div>
+              <div className="text-white font-bold text-[13px] tracking-tight leading-none">TM</div>
             )}
           </div>
 

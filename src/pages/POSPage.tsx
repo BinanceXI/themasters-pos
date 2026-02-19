@@ -66,7 +66,7 @@ function makeReceiptNumber() {
   const ss = pad(d.getSeconds());
   const rand = Math.random().toString(16).slice(2, 6).toUpperCase();
 
-  return `BXI-${y}${m}${day}-${hh}${mm}${ss}-${rand}`;
+  return `TM-${y}${m}${day}-${hh}${mm}${ss}-${rand}`;
 }
 
 /** ---- helpers ---- */
@@ -78,7 +78,7 @@ function round2(n: number) {
 }
 
 // Settings key (so you can control later from Settings page)
-const TAX_RATE_KEY = "binancexi_tax_rate"; // store as percentage e.g. "0" or "15"
+const TAX_RATE_KEY = "themasters_tax_rate"; // store as percentage e.g. "0" or "15"
 
 export const POSPage = () => {
   const ensureCameraPermission = useCallback(async () => {
@@ -189,15 +189,15 @@ const [showMobileCart, setShowMobileCart] = useState(false);
   }, []);
 
   // If you later change settings without refresh, emit:
-  // window.dispatchEvent(new Event("binancexi_settings_changed"))
+  // window.dispatchEvent(new Event("themasters_settings_changed"))
   useEffect(() => {
     const onSettingsChanged = () => {
       const raw = localStorage.getItem(TAX_RATE_KEY);
       const n = raw == null ? 0 : Number(raw);
       setTaxRatePct(Number.isFinite(n) ? clamp(n, 0, 100) : 0);
     };
-    window.addEventListener("binancexi_settings_changed" as any, onSettingsChanged);
-    return () => window.removeEventListener("binancexi_settings_changed" as any, onSettingsChanged);
+    window.addEventListener("themasters_settings_changed" as any, onSettingsChanged);
+    return () => window.removeEventListener("themasters_settings_changed" as any, onSettingsChanged);
   }, []);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -556,7 +556,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
     const unitPrice = item.customPrice ?? item.product.price;
     const lineTotal = Number(unitPrice) * Number(item.quantity);
 
-    const type: DiscountType = discountMode === "percent" ? "percentage" : "fixed";
+    let type: DiscountType = discountMode === "percent" ? "percentage" : "fixed";
     let value = raw;
 
     if (type === "fixed") value = round2(clamp(value, 0, lineTotal));

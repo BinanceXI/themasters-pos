@@ -13,7 +13,6 @@ export type RemoteUserProfile = {
   full_name: string | null;
   role: string | null;
   permissions: any;
-  business_id?: string | null;
   active?: boolean | null;
 };
 
@@ -49,13 +48,8 @@ export async function seedLocalUserFromPassword(profile: RemoteUserProfile, pass
     id: String(profile.id),
     username,
     full_name: profile.full_name ?? null,
-    role: (profile.role === "platform_admin"
-      ? "platform_admin"
-      : profile.role === "admin"
-      ? "admin"
-      : "cashier") as any,
+    role: (profile.role === "admin" ? "admin" : "cashier") as any,
     permissions: profile.permissions || {},
-    business_id: (profile as any).business_id ?? null,
     active: profile.active === false ? false : true,
     password: hashed,
     updated_at: new Date().toISOString(),

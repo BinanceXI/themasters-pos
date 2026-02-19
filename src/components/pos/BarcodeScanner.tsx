@@ -40,7 +40,7 @@ function explainCameraError(err: any) {
       state: "denied" as const,
       title: "Camera permission denied",
       message:
-        "Allow Camera permission, then tap Retry. On Android: Settings → Apps → BinanceXI POS → Permissions → Camera → Allow.",
+        "Allow Camera permission, then tap Retry. On Android: Settings → Apps → TheMasters POS → Permissions → Camera → Allow.",
     };
   }
   if (name === "NotFoundError") {

@@ -43,7 +43,7 @@ import { tryPrintThermalQueue } from "@/lib/thermalPrint";
 // --------------------
 // Offline queue helpers
 // --------------------
-const OFFLINE_QUEUE_KEY = "binancexi_offline_queue";
+const OFFLINE_QUEUE_KEY = "themasters_offline_queue";
 
 function safeJSONParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -57,7 +57,7 @@ function safeJSONParse<T>(raw: string | null, fallback: T): T {
 function writeOfflineQueue(queue: any[]) {
   localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue || []));
   try {
-    window.dispatchEvent(new Event("binancexi:queue_changed"));
+    window.dispatchEvent(new Event("themasters:queue_changed"));
   } catch {
     // ignore
   }
@@ -251,7 +251,7 @@ const [printerPort, setPrinterPort] = useState(
       if (error && (error as any).code !== "PGRST116") throw error;
 
       const defaults: StoreSettings = {
-        business_name: "Your Business",
+        business_name: "TheMasters",
         address: "",
         phone: "",
         tax_id: "",
@@ -369,7 +369,7 @@ const testThermalPrint = async () => {
 
   const cashierIds = Array.from(new Set((orders || []).map((o: any) => o.cashier_id).filter(Boolean)));
 
-  const cashierMap = new Map<string, string>();
+  let cashierMap = new Map<string, string>();
   if (cashierIds.length) {
     const { data: profs } = await supabase
       .from("profiles")
@@ -405,10 +405,10 @@ const testThermalPrint = async () => {
     const refresh = () => setOfflineQueue(readOfflineQueue());
     refresh();
 
-    window.addEventListener("binancexi:queue_changed", refresh as any);
+    window.addEventListener("themasters:queue_changed", refresh as any);
     window.addEventListener("storage", refresh as any);
     return () => {
-      window.removeEventListener("binancexi:queue_changed", refresh as any);
+      window.removeEventListener("themasters:queue_changed", refresh as any);
       window.removeEventListener("storage", refresh as any);
     };
   }, [activeTab, isOnline, readOfflineQueue]);

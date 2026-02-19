@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">BinanceXI POS</string>
-    <string name="title_activity_main">BinanceXI POS</string>
-    <string name="package_name">com.binancexi.pos</string>
-    <string name="custom_url_scheme">com.binancexi.pos</string>
+    <string name="app_name">TheMasters POS</string>
+    <string name="title_activity_main">TheMasters POS</string>
+    <string name="package_name">com.themasters.pos</string>
+    <string name="custom_url_scheme">com.themasters.pos</string>
 </resources>

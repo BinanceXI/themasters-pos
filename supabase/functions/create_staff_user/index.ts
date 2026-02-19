@@ -16,12 +16,6 @@ function sanitizeUsername(raw: string) {
     .replace(/[^a-z0-9._-]/g, "");
 }
 
-type CallerRow = {
-  role: string | null;
-  active: boolean | null;
-  business_id: string | null;
-};
-
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
@@ -30,12 +24,12 @@ serve(async (req) => {
     const env = getSupabaseEnv();
     const jwt = getBearerToken(req);
 
-    // Reject anon-key auth (and service key)
+    // ✅ Reject anon-key auth (and service key)
     if (!jwt || isClearlyNotAUserJwt(jwt, env)) {
       return json(401, { error: "Missing or invalid user session" });
     }
 
-    // Verify the token against Supabase Auth
+    // ✅ Verify the token against Supabase Auth
     const userClient = supabaseAuthClient(env, jwt);
     const {
       data: { user },
@@ -44,37 +38,23 @@ serve(async (req) => {
 
     if (userErr || !user) return json(401, { error: "Invalid user session" });
 
+    // ✅ Admin check
     const adminClient = supabaseAdminClient(env);
-
-    // Caller profile (role + tenant scope)
     const { data: caller, error: callerErr } = await adminClient
       .from("profiles")
-      .select("role, active, business_id")
+      .select("role, active")
       .eq("id", user.id)
       .maybeSingle();
 
     if (callerErr) return json(500, { error: "Failed to check caller role" });
     if (!caller || caller.active === false) return json(403, { error: "Account disabled" });
-
-    const callerRow = caller as CallerRow;
-    const isPlatformAdmin = callerRow.role === "platform_admin";
-    const isBusinessAdmin = callerRow.role === "admin";
-
-    if (!isPlatformAdmin && !isBusinessAdmin) return json(403, { error: "Admins only" });
+    if (caller.role !== "admin") return json(403, { error: "Admins only" });
 
     const body = await req.json().catch(() => ({} as any));
 
     const username = sanitizeUsername(body?.username);
     const full_name = String(body?.full_name || "").trim();
-
-    const requestedRole = String(body?.role || "cashier").trim().toLowerCase();
-    const role =
-      requestedRole === "platform_admin"
-        ? "platform_admin"
-        : requestedRole === "admin"
-        ? "admin"
-        : "cashier";
-
+    const role = (body?.role === "admin" ? "admin" : "cashier") as "admin" | "cashier";
     const permissions = body?.permissions && typeof body.permissions === "object" ? body.permissions : {};
 
     const password = String(body?.password || "");
@@ -85,31 +65,9 @@ serve(async (req) => {
     if (!full_name) return json(400, { error: "Full name required" });
     if (!passRes.ok) return json(400, { error: passRes.reason });
 
-    let business_id: string | null = null;
+    const email = `${username}@themasterspos.app`;
 
-    // Platform admin accounts: only platform admins can create them, and they are not tied to a business.
-    if (role === "platform_admin") {
-      if (!isPlatformAdmin) return json(403, { error: "Platform admins only" });
-      business_id = null;
-    } else {
-      // Business staff accounts
-      if (isPlatformAdmin) {
-        business_id = String(body?.business_id || "").trim() || null;
-        if (!business_id) return json(400, { error: "Missing business_id" });
-      } else {
-        business_id = callerRow.business_id;
-        if (!business_id) {
-          return json(400, {
-            error: "Caller has no business_id. Ask BinanceXI POS admin to fix your account.",
-          });
-        }
-      }
-    }
-
-    // Synthetic email (internal-only; no real mailbox needed)
-    const email = `${username}@binancexi-pos.app`;
-
-    // Create Auth user
+    // Create auth user
     const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
       email,
       password: passRes.password,
@@ -121,19 +79,15 @@ serve(async (req) => {
       return json(400, { error: createErr?.message ?? "User creation failed" });
     }
 
-    // Create/update profile
-    const { error: profileErr } = await adminClient.from("profiles").upsert(
-      {
-        id: created.user.id,
-        username,
-        full_name,
-        role,
-        permissions,
-        active: true,
-        business_id,
-      },
-      { onConflict: "id" }
-    );
+    // Create profile (NO password secrets stored in profiles)
+    const { error: profileErr } = await adminClient.from("profiles").insert({
+      id: created.user.id,
+      username,
+      full_name,
+      role,
+      permissions,
+      active: true,
+    });
 
     if (profileErr) {
       return json(400, { error: profileErr.message });
@@ -162,4 +116,3 @@ serve(async (req) => {
     return json(500, { error: "Unhandled error", details: e?.message || String(e) });
   }
 });
-

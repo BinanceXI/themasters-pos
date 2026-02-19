@@ -23,7 +23,7 @@ import {
 } from "@/lib/serviceBookings";
 
 /* ---------------------------------- USER TYPES --------------------------------- */
-export type Role = "platform_admin" | "admin" | "cashier";
+export type Role = "admin" | "cashier";
 
 export type UserPermissions = {
   allowRefunds: boolean;
@@ -41,7 +41,6 @@ export type POSUser = {
   username: string;
   role: Role;
   permissions: UserPermissions;
-  business_id?: string | null;
 
   // convenience
   full_name?: string;
@@ -162,9 +161,9 @@ export const usePOS = () => {
 
 /* ----------------------------- STORAGE KEYS -------------------------------- */
 
-const OFFLINE_QUEUE_KEY = "binancexi_offline_queue";
-const HELD_SALES_KEY = "binancexi_held_sales";
-const USER_KEY = "binancexi_user";
+const OFFLINE_QUEUE_KEY = "themasters_offline_queue";
+const HELD_SALES_KEY = "themasters_held_sales";
+const USER_KEY = "themasters_user";
 
 /* -------------------------------- HELPERS ---------------------------------- */
 
@@ -347,7 +346,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   const can = (permission: keyof UserPermissions) => {
     if (!currentUser) return false;
-    if (currentUser.role === "platform_admin" || currentUser.role === "admin") return true;
+    if (currentUser.role === "admin") return true;
     return !!currentUser.permissions?.[permission];
   };
 
@@ -395,7 +394,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
   const notifyQueueChanged = () => {
     try {
-      window.dispatchEvent(new Event("binancexi:queue_changed"));
+      window.dispatchEvent(new Event("themasters:queue_changed"));
     } catch {
       // ignore
     }
@@ -706,8 +705,8 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       if (navigator.onLine) runGlobalSync({ silent: true });
     };
 
-    window.addEventListener("binancexi:queue_changed", onQueueChanged as any);
-    return () => window.removeEventListener("binancexi:queue_changed", onQueueChanged as any);
+    window.addEventListener("themasters:queue_changed", onQueueChanged as any);
+    return () => window.removeEventListener("themasters:queue_changed", onQueueChanged as any);
   }, [refreshPendingSyncCount, runGlobalSync]);
 
   // Background auto-retry (helps Capacitor where "online" events can be flaky).

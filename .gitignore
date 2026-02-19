@@ -26,8 +26,3 @@ dist-ssr
 
 # Local media (not source code)
 the masters/
-
-# Supabase local tooling state
-supabase/.temp/
-supabase/.branches/
-.supabase/

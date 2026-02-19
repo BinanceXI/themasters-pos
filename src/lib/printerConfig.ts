@@ -1,13 +1,13 @@
 // File: src/lib/printQueue.ts
-const KEY = "themasters_thermal_print_queue_v1";
+export const THERMAL_QUEUE_KEY = "themasters_thermal_print_queue_v1";
 
 export type ThermalJob = {
   receiptNumber: string;
   timestamp: string;
   cashierName: string;
-  customerName: string;
+  customerName?: string;
   paymentMethod: string;
-  cart: any[];
+  cart: Array<{ product: { name: string; price: number }; quantity: number; customPrice?: number }>;
   subtotal: number;
   discount: number;
   tax: number;
@@ -16,14 +16,14 @@ export type ThermalJob = {
 
 function readQueue(): ThermalJob[] {
   try {
-    return JSON.parse(localStorage.getItem(KEY) || "[]");
+    return JSON.parse(localStorage.getItem(THERMAL_QUEUE_KEY) || "[]");
   } catch {
     return [];
   }
 }
 
 function writeQueue(q: ThermalJob[]) {
-  localStorage.setItem(KEY, JSON.stringify(q || []));
+  localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(q || []));
 }
 
 export function enqueueThermalJob(job: ThermalJob) {

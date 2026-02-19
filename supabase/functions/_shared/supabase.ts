@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 export function getSupabaseEnv() {
   const url = Deno.env.get("SUPABASE_URL") || Deno.env.get("PROJECT_URL") || "";
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("ANON_KEY") || "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
   const serviceRoleKey =
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SERVICE_ROLE_KEY") || "";
 
@@ -59,3 +59,4 @@ export function supabaseAdminClient(env: { url: string; serviceRoleKey: string }
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 }
+
