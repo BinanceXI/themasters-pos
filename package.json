@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "prebuild": "node scripts/verify-backend-env.mjs",
+    "test:solid": "node scripts/run-solid-tests.mjs",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
