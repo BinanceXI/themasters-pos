@@ -619,7 +619,7 @@ export const InventoryPage = () => {
       </div>
 
       {/* Search + Categories */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 bg-card p-3 rounded-xl border border-border">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 premium-surface border-white/10 dark:border-white/5 p-3 rounded-xl">
         <div className="relative w-full sm:flex-1 sm:max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <Input
@@ -678,7 +678,7 @@ export const InventoryPage = () => {
       </div>
 
       {/* Table */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-x-auto">
+      <div className="premium-surface border-white/10 dark:border-white/5 rounded-xl shadow-sm overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>

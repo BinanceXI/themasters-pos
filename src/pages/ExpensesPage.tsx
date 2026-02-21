@@ -359,25 +359,25 @@ export const ExpensesPage = () => {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card>
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Revenue</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">${revenue.toFixed(2)}</CardContent>
         </Card>
-        <Card>
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Expenses</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">${totals.totalExpenses.toFixed(2)}</CardContent>
         </Card>
-        <Card>
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Owner Drawings</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold">${totals.totalDrawings.toFixed(2)}</CardContent>
         </Card>
-        <Card>
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Net</CardTitle>
           </CardHeader>

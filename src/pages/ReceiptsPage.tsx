@@ -1289,7 +1289,7 @@ const testThermalPrint = async () => {
       </div>
 
       {isPrinting && (
-        <div className="fixed bottom-4 right-4 bg-card border border-border px-3 py-2 rounded-xl shadow-lg text-xs">
+        <div className="fixed bottom-4 right-4 premium-surface border border-white/10 dark:border-white/5 px-3 py-2 rounded-xl shadow-lg text-xs">
           Printing…
         </div>
       )}
@@ -1300,7 +1300,7 @@ const testThermalPrint = async () => {
 // ---- UI helpers ----
 
 const SettingsCard = ({ title, icon: Icon, children }: any) => (
-  <motion.div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+  <motion.div className="premium-surface border border-white/10 dark:border-white/5 rounded-2xl overflow-hidden shadow-sm">
     <div className="px-6 py-4 border-b border-slate-800 flex items-center gap-3">
       <div className="p-2 bg-blue-500/10 rounded-lg">
         <Icon className="h-5 w-5 text-blue-400" />

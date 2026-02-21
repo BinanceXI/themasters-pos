@@ -103,12 +103,15 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    background-color: hsl(var(--background));
     background-image:
-      radial-gradient(1200px 650px at -10% -15%, hsl(var(--primary) / 0.18), transparent 58%),
-      radial-gradient(900px 520px at 110% -20%, hsl(217 86% 62% / 0.16), transparent 60%);
+      radial-gradient(at 0% 0%, hsla(var(--primary) / 0.2) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(280, 100%, 70%, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, hsla(var(--accent) / 0.2) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, hsla(200, 100%, 60%, 0.15) 0px, transparent 50%);
     background-attachment: fixed;
 
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -132,8 +135,12 @@
   .pos-scrollbar::-webkit-scrollbar-track { @apply bg-transparent; }
   .pos-scrollbar::-webkit-scrollbar-thumb { @apply bg-slate-700/50 rounded-full; }
   .pos-scrollbar::-webkit-scrollbar-thumb:hover { @apply bg-slate-600; }
-  .glass { @apply bg-white/80 backdrop-blur-xl; }
-  .glass-dark { @apply bg-black/40 backdrop-blur-xl; }
+  .glass { 
+    @apply bg-white/40 dark:bg-black/30 backdrop-blur-[24px] border border-white/30 dark:border-white/10 shadow-[0_8px_32px_0_rgba(31,38,135,0.07)]; 
+  }
+  .glass-dark { 
+    @apply bg-black/40 backdrop-blur-[32px] border border-white/10 shadow-2xl; 
+  }
   .page-enter {
     animation: page-enter 440ms cubic-bezier(0.2, 0.68, 0.2, 1) both;
   }
@@ -141,15 +148,17 @@
     animation: fade-rise 520ms cubic-bezier(0.2, 0.68, 0.2, 1) both;
   }
   .premium-surface {
-    border: 1px solid hsl(var(--border) / 0.68);
+    border: 1px solid hsl(var(--border) / 0.4);
     background: linear-gradient(
-      165deg,
-      hsl(var(--card) / 0.96),
-      hsl(var(--card-elevated) / 0.84)
+      142deg,
+      hsl(var(--card) / 0.8) 0%,
+      hsl(var(--card-elevated) / 0.4) 100%
     );
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     box-shadow:
-      0 20px 40px -32px hsl(224 22% 8% / 0.56),
-      inset 0 1px 0 hsl(0 0% 100% / 0.26);
+      0 24px 48px -12px hsl(224 22% 8% / 0.15),
+      inset 0 1px 0 hsl(0 0% 100% / 0.4);
   }
 }
 

@@ -40,7 +40,7 @@ const StatCard = ({
   iconColor: string;
   trend?: 'up' | 'down' | 'neutral';
 }) => (
-  <Card className="relative overflow-hidden">
+  <Card className="relative overflow-hidden premium-surface border-white/10 dark:border-white/5">
     <CardContent className="p-6">
       <div className="flex items-start justify-between">
         <div>
@@ -258,7 +258,7 @@ export const DashboardPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Payment Breakdown */}
-        <Card className="lg:col-span-1 border-border/50 shadow-sm">
+        <Card className="lg:col-span-1 premium-surface border-white/10 dark:border-white/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-semibold">Payment Methods</CardTitle>
           </CardHeader>
@@ -293,7 +293,7 @@ export const DashboardPage = () => {
         </Card>
 
         {/* Recent Transactions */}
-        <Card className="lg:col-span-2 border-border/50 shadow-sm">
+        <Card className="lg:col-span-2 premium-surface border-white/10 dark:border-white/5">
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="text-base font-semibold">Recent Transactions</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => navigate('/reports')}>View All</Button>
@@ -335,7 +335,7 @@ export const DashboardPage = () => {
       </div>
 
       {/* Low Stock Alerts */}
-      <Card className="border-border/50 shadow-sm">
+      <Card className="premium-surface border-white/10 dark:border-white/5">
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-500" />

@@ -109,6 +109,7 @@ type StoreSettings = {
   daily_sales_summary?: boolean | null;
   sound_effects?: boolean | null;
   low_stock_threshold?: number | null;
+  updated_at?: string | null;
 };
 
 type UserPermissions = {
@@ -955,7 +956,7 @@ export const SettingsPage = () => {
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <Card>
+              <Card className="premium-surface border-white/10 dark:border-white/5">
                 <CardHeader>
                   <CardTitle>Business Profile</CardTitle>
                 </CardHeader>
@@ -1099,7 +1100,7 @@ export const SettingsPage = () => {
               className="space-y-4"
             >
               {!isAdmin ? (
-                <Card>
+                <Card className="premium-surface border-white/10 dark:border-white/5">
                   <CardContent className="p-6 text-sm text-muted-foreground">
                     Admins only.
                   </CardContent>
@@ -1205,7 +1206,7 @@ export const SettingsPage = () => {
                     </CardContent>
                   </Card>
 
-                  <Card>
+                  <Card className="premium-surface border-white/10 dark:border-white/5">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <KeyRound className="w-5 h-5" />
@@ -1250,7 +1251,7 @@ export const SettingsPage = () => {
                     </CardContent>
                   </Card>
 
-                  <Card>
+                  <Card className="premium-surface border-white/10 dark:border-white/5">
                     <CardHeader className="flex flex-row items-center justify-between">
                       <CardTitle>Staff</CardTitle>
                       <div className="flex items-center gap-2">
@@ -1437,7 +1438,7 @@ export const SettingsPage = () => {
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <Card>
+              <Card className="premium-surface border-white/10 dark:border-white/5">
                 <CardHeader>
                   <CardTitle>Financial Settings</CardTitle>
                 </CardHeader>
@@ -1529,7 +1530,7 @@ export const SettingsPage = () => {
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <Card>
+              <Card className="premium-surface border-white/10 dark:border-white/5">
                 <CardHeader>
                   <CardTitle>Theme Preferences</CardTitle>
                 </CardHeader>
@@ -1587,7 +1588,7 @@ export const SettingsPage = () => {
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <Card>
+              <Card className="premium-surface border-white/10 dark:border-white/5">
                 <CardHeader>
                   <CardTitle>Data Export</CardTitle>
                 </CardHeader>
@@ -1620,7 +1621,7 @@ export const SettingsPage = () => {
 	                </CardContent>
 	              </Card>
 
-              <Card>
+              <Card className="premium-surface border-white/10 dark:border-white/5">
                 <CardHeader>
                   <CardTitle>Backend</CardTitle>
                 </CardHeader>

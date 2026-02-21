@@ -427,21 +427,32 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex bg-background relative overflow-hidden">
+      {/* Ambient glass background for the right side */}
+      <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[50%] bg-primary/20 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[10%] w-[40%] h-[40%] bg-blue-500/10 rounded-full blur-[100px] pointer-events-none" />
+
       {/* LEFT BRAND PANEL */}
       <div className="hidden lg:flex lg:w-1/2 relative items-center justify-center overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900" />
 
         <div className="relative z-10 flex flex-col items-center text-white px-12 w-full">
           {/* HUGE LOGO */}
-          <div className="mb-12 w-full flex justify-center">
-            <img
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+            className="mb-12 w-full flex justify-center"
+          >
+             <motion.img
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               src={themastersLogo}
               alt="TheMasters POS"
-              className="w-[460px] max-w-full drop-shadow-[0_20px_60px_rgba(0,0,0,0.6)]"
+              className="w-[560px] max-w-full drop-shadow-[0_24px_60px_rgba(0,0,0,0.8)] cursor-pointer"
               style={{ filter: "invert(1) hue-rotate(180deg) contrast(1.25)" }}
             />
-          </div>
+          </motion.div>
 
           <h1 className="text-4xl font-bold text-center mb-4">Tech & Repair Business Solution</h1>
 
@@ -465,14 +476,21 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
       </div>
 
       {/* RIGHT LOGIN PANEL */}
-      <div className="flex-1 flex items-center justify-center px-6">
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md space-y-6">
+      <div className="flex-1 flex items-center justify-center px-6 relative z-10">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95, y: 16 }} 
+          animate={{ opacity: 1, scale: 1, y: 0 }} 
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="w-full max-w-md space-y-6 premium-surface p-8 sm:p-10 rounded-[2rem] border-white/20 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.3)]"
+        >
           {/* MOBILE LOGO */}
           <div className="lg:hidden flex justify-center mb-8">
-            <img
+            <motion.img
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               src={themastersLogo}
               alt="TheMasters POS"
-              className="w-[300px]"
+              className="w-[360px] drop-shadow-[0_16px_40px_rgba(0,0,0,0.6)]"
               style={{ filter: "invert(1) hue-rotate(180deg) contrast(1.25)" }}
             />
           </div>

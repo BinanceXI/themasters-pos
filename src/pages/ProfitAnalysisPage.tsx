@@ -268,7 +268,7 @@ export const ProfitAnalysisPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Chart */}
-        <Card className="lg:col-span-2 border-border/50 shadow-sm bg-card/50 backdrop-blur-sm">
+        <Card className="lg:col-span-2 premium-surface border-white/10 dark:border-white/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <BarChart3 className="w-5 h-5 text-muted-foreground" /> 
@@ -302,7 +302,7 @@ export const ProfitAnalysisPage = () => {
         </Card>
 
         {/* Top Products */}
-        <Card className="lg:col-span-1 border-border/50 shadow-sm h-full bg-card/50 backdrop-blur-sm">
+        <Card className="lg:col-span-1 premium-surface border-white/10 dark:border-white/5 h-full">
           <CardHeader>
             <CardTitle className="text-base">Top Performers</CardTitle>
           </CardHeader>

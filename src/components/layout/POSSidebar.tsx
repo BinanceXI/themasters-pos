@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePOS } from "@/contexts/POSContext";
+import themastersLogo from "@/assets/themasters-logo.png";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -64,22 +65,30 @@ export const POSSidebar = () => {
           "bg-[hsl(var(--sidebar-background))/0.94] border-r border-white/10 backdrop-blur-xl"
         )}
       >
-        {/* ===== BRAND HEADER (NO LOGO) ===== */}
-        <div className={cn("px-4 pt-4 pb-3 border-b border-white/10", collapsed && "px-3")}>
-          <div className={cn("flex items-start", collapsed ? "justify-center" : "justify-between")}>
-            {!collapsed ? (
-              <div className="min-w-0">
-                <div className="text-white font-semibold text-[15px] tracking-tight leading-tight">
-                  TheMasters POS
-                </div>
-                <div className="text-white/55 text-[12px] mt-0.5 truncate">
-                  {displayName} • {role || "—"}
-                </div>
-              </div>
-            ) : (
-              <div className="text-white font-bold text-[13px] tracking-tight leading-none">TM</div>
-            )}
+        {/* ===== BRAND HEADER (WITH LOGO POP) ===== */}
+        <div className={cn("px-4 pt-6 pb-4 border-b border-white/10", collapsed && "px-3")}>
+          <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-center mb-4")}>
+            <motion.img
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              src={themastersLogo}
+              alt="TheMasters Logo"
+              className={cn(
+                "object-contain filter drop-shadow-[0_4px_20px_rgba(255,255,255,0.6)] cursor-pointer",
+                collapsed ? "w-12 h-12" : "w-28 h-28"
+              )}
+            />
           </div>
+          {!collapsed && (
+            <div className="text-center min-w-0">
+              <div className="text-white font-bold text-[17px] tracking-tight leading-tight">
+                TheMasters POS
+              </div>
+              <div className="text-white/60 text-[12px] mt-1 truncate">
+                {displayName} • {role || "—"}
+              </div>
+            </div>
+          )}
 
           {!collapsed && (
             <div className="mt-3">
@@ -109,11 +118,11 @@ export const POSSidebar = () => {
                   key={item.path}
                   to={item.path}
                   className={cn(
-                    "group relative flex items-center rounded-xl transition-all duration-300",
+                    "group relative flex items-center rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]",
                     collapsed ? "justify-center px-2 py-3" : "px-3 py-3",
                     isActive
                       ? "bg-white/11 border border-white/18 shadow-[0_14px_22px_-18px_rgba(0,0,0,0.7)]"
-                      : "border border-transparent hover:bg-white/[0.05] hover:border-white/10"
+                      : "border border-transparent hover:bg-white/[0.08] hover:border-white/15"
                   )}
                 >
                   {isActive && (

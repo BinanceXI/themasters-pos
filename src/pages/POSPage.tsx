@@ -802,7 +802,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
 
       {/* LEFT COLUMN */}
 <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50">
-        <div className="p-3 bg-card border-b border-border flex justify-between items-center gap-3 shadow-sm z-10">
+        <div className="p-3 premium-surface border-b border-white/10 dark:border-white/5 flex justify-between items-center gap-3 shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] z-10">
           <div className="text-xs font-mono bg-muted px-2 py-1 rounded flex items-center gap-2">
             <span
               className={cn(
@@ -872,7 +872,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
             <Input
               ref={searchInputRef}
               placeholder="Search Item, SKU, or Scan (F2)..."
-              className="pl-9 h-10 font-mono text-sm bg-card shadow-sm"
+              className="pl-9 h-10 font-mono text-sm bg-black/5 dark:bg-white/5 shadow-sm border border-white/10 dark:border-white/5 backdrop-blur-md"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setFocusArea("search")}
@@ -951,8 +951,8 @@ const [showMobileCart, setShowMobileCart] = useState(false);
       </div>
 
       {/* RIGHT COLUMN (Desktop sticky) */}
-<div className="hidden lg:flex lg:w-[420px] lg:flex-col bg-card border-l border-border lg:h-[100dvh] lg:sticky lg:top-0 shadow-2xl z-20">
-        <div className="p-4 border-b space-y-3 bg-card">
+<div className="hidden lg:flex lg:w-[420px] lg:flex-col premium-surface border-l border-white/10 dark:border-white/5 lg:h-[100dvh] lg:sticky lg:top-0 shadow-2xl z-20">
+        <div className="p-4 border-b border-white/10 dark:border-white/5 space-y-3 bg-black/5 dark:bg-white/5 backdrop-blur-md">
           <div className="flex justify-between items-center">
             <h2 className="font-bold text-lg flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-primary" />
@@ -1080,7 +1080,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
 {/* MOBILE CART DIALOG */}
 <Dialog open={showMobileCart} onOpenChange={setShowMobileCart}>
   <DialogContent className="p-0 max-w-[95vw] w-full">
-    <div className="flex flex-col bg-card h-[85dvh]">
+    <div className="flex flex-col premium-surface h-[85dvh]">
 
       {/* HEADER */}
       <div className="p-4 border-b space-y-3 bg-card">
@@ -1139,7 +1139,7 @@ const [showMobileCart, setShowMobileCart] = useState(false);
       {/* PAYMENT */}
       <div className="border-t">
         {posMode === "service" && (
-          <div className="p-3 border-b border-border bg-card">
+          <div className="p-3 border-b border-white/10 dark:border-white/5 bg-black/5 dark:bg-white/5 backdrop-blur-sm">
             <div className="grid grid-cols-2 gap-2">
               <Button type="button" variant="outline" className="gap-2" onClick={openNewServiceBooking}>
                 <CalendarPlus className="w-4 h-4" /> Book Service
@@ -1307,7 +1307,7 @@ const ProductCard = ({
       onMouseEnter={onHover}
       onClick={() => onAdd(product)}
       className={cn(
-        "flex flex-col p-3 rounded-xl border text-left transition-all relative overflow-hidden bg-card hover:shadow-md hover:border-primary/50 group active:scale-[0.98] duration-150",
+        "flex flex-col p-3 rounded-xl border border-white/10 dark:border-white/5 text-left transition-all relative overflow-hidden premium-surface hover:shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] hover:border-primary/50 group active:scale-[0.98] duration-150",
         isSelected && "ring-2 ring-primary border-primary",
         isOutOfStock && "opacity-50 grayscale cursor-not-allowed bg-muted"
       )}
@@ -1371,7 +1371,7 @@ const CartItemRow = ({
       initial={{ opacity: 0, x: 18 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -18 }}
-      className="bg-card border border-border p-2.5 rounded-lg flex justify-between items-center shadow-sm"
+      className="premium-surface border border-white/10 dark:border-white/5 p-2.5 rounded-lg flex justify-between items-center shadow-sm"
     >
       <div className="overflow-hidden flex-1 mr-2">
         <div className="font-medium text-sm truncate flex items-center gap-2">

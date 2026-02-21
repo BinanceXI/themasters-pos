@@ -543,7 +543,7 @@ export const ReportsPage = () => {
       </div>
 
       {/* P4: This month widget */}
-      <Card className="border-border/50 shadow-sm">
+      <Card className="premium-surface border-white/10 dark:border-white/5">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold">This month (Revenue vs Expenses)</CardTitle>
         </CardHeader>
@@ -572,7 +572,7 @@ export const ReportsPage = () => {
 	      </Card>
 
 	      {/* P5: This month service breakdown */}
-	      <Card className="border-border/50 shadow-sm">
+	      <Card className="premium-surface border-white/10 dark:border-white/5">
 	        <CardHeader className="pb-3">
 	          <CardTitle className="text-base font-semibold">This month (Goods vs Services)</CardTitle>
 	          {!isOnline && (
@@ -648,7 +648,7 @@ export const ReportsPage = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Main Revenue Chart */}
-        <Card className="lg:col-span-2 shadow-sm border-border/50 bg-card/50 backdrop-blur-sm">
+        <Card className="lg:col-span-2 premium-surface border-white/10 dark:border-white/5">
           <CardHeader>
             <CardTitle className="text-base font-semibold flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-muted-foreground" />
@@ -693,7 +693,7 @@ export const ReportsPage = () => {
         </Card>
 
         {/* Sales by Cashier (Vertical List) */}
-        <Card className="shadow-sm border-border/50 bg-card/50 backdrop-blur-sm">
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Top Cashiers</CardTitle>
           </CardHeader>
@@ -722,7 +722,7 @@ export const ReportsPage = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         
         {/* Payment Methods */}
-        <Card className="shadow-sm border-border/50">
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Payment Methods</CardTitle>
           </CardHeader>
@@ -748,7 +748,7 @@ export const ReportsPage = () => {
         </Card>
 
         {/* Top Selling Items */}
-        <Card className="shadow-sm border-border/50">
+        <Card className="premium-surface border-white/10 dark:border-white/5">
           <CardHeader>
             <CardTitle className="text-base font-semibold">Top Selling Items</CardTitle>
           </CardHeader>
