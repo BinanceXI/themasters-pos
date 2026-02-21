@@ -7,6 +7,7 @@ import {
   BarChart3,
   Settings,
   Wallet,
+  Printer,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { usePOS } from '@/contexts/POSContext';
@@ -15,6 +16,7 @@ const navItems = [
   { path: '/dashboard', label: 'Home', icon: LayoutDashboard },
   { path: '/pos', label: 'POS', icon: ShoppingCart },
   { path: '/inventory', label: 'Stock', icon: Package },
+  { path: '/receipts', label: 'Receipts', icon: Printer },
   { path: '/expenses', label: 'Expenses', icon: Wallet },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
   { path: '/settings', label: 'Settings', icon: Settings },
@@ -31,6 +33,7 @@ export const MobileBottomNav = () => {
     if (item.path === '/reports' && !currentUser.permissions.allowReports) return false;
     if (item.path === '/inventory' && !currentUser.permissions.allowInventory) return false;
     if (item.path === '/settings' && !currentUser.permissions.allowSettings) return false;
+    // By default, everyone can see Receipts (like POS/Dashboard), but permissions can be adjusted if needed in the future
     return true;
   });
 
@@ -64,7 +67,7 @@ export const MobileBottomNav = () => {
                   </span>
                 )}
               </div>
-              <span className="text-[10px] font-medium">{item.label}</span>
+              <span className="text-[9px] font-medium leading-[1] truncate max-w-full px-1 text-center">{item.label}</span>
             </NavLink>
           );
         })}

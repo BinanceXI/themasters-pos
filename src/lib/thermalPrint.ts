@@ -283,8 +283,9 @@ function buildEscPos(d: ThermalReceiptData) {
   parts.push(bytes(ESC, 0x61, 0x00));
 
   // Feed extra lines so the tear/cut doesn't eat the last line.
-  parts.push(bytes(ESC, 0x64, 0x05));
-  parts.push(bytes(GS, 0x56, 0x00)); // cut (some printers ignore; safe)
+  parts.push(bytes(ESC, 0x64, 0x05)); // Feed 5 lines
+  parts.push(bytes(GS, 0x56, 0x42, 0x00)); // Standard ESC/POS full cut (0x42 is often more reliable than 0x00)
+
 
   return concat(parts);
 }

@@ -61,19 +61,25 @@ function withTimeout<T>(p: Promise<T>, timeoutMs: number, msg: string) {
 function pickPrinter(devices: any[]) {
   const saved = localStorage.getItem(BT_LAST_ADDRESS_KEY) || "";
   const savedMatch = saved ? devices.find((d) => String(d.address || "") === saved) : null;
+  // Strictly enforce matched address to prevent cross-printing among multiple POS units
   if (savedMatch) return savedMatch;
 
-  const byName = (needle: string) =>
-    devices.find((d) => String(d.name || "").toLowerCase().includes(needle));
+  // Fallback to searching names only if there is NO saved bluetooth hardware address
+  if (!saved) {
+    const byName = (needle: string) =>
+      devices.find((d) => String(d.name || "").toLowerCase().includes(needle));
 
-  return (
-    byName("pos") ||
-    byName("printer") ||
-    byName("xp-") ||
-    byName("xprinter") ||
-    byName("sp") ||
-    devices[0]
-  );
+    return (
+      byName("pos") ||
+      byName("printer") ||
+      byName("xp-") ||
+      byName("xprinter") ||
+      byName("sp") ||
+      devices[0]
+    );
+  }
+
+  return null;
 }
 
 async function btList(bt: any) {
@@ -162,8 +168,8 @@ export async function printToBluetooth58mm(data: Uint8Array, opts: BluetoothPrin
     }
   }
 
-  const chunkSize = Math.max(512, Math.min(1024, Math.trunc(opts.chunkSize ?? 800)));
-  const chunkDelayMs = Math.max(5, Math.trunc(opts.chunkDelayMs ?? 35));
+  const chunkSize = Math.max(128, Math.min(512, Math.trunc(opts.chunkSize ?? 256)));
+  const chunkDelayMs = Math.max(35, Math.trunc(opts.chunkDelayMs ?? 80));
   const retries = Math.max(1, Math.trunc(opts.retries ?? 3));
 
   const requestedAddress = String(opts.address || "").trim();
@@ -179,7 +185,7 @@ export async function printToBluetooth58mm(data: Uint8Array, opts: BluetoothPrin
     const printer = pickPrinter(devices);
     address = String(printer?.address || "").trim();
     printerName = String(printer?.name || "").trim();
-    if (!address) throw new Error("Printer address not found. Pair the printer again in Android settings.");
+    if (!address) throw new Error("Please select the exact printer address in the Receipts Settings panel.");
   } else {
     // Best-effort: resolve name for error messages
     try {
@@ -206,8 +212,9 @@ export async function printToBluetooth58mm(data: Uint8Array, opts: BluetoothPrin
         await sleep(chunkDelayMs);
       }
 
-      // Give the printer a moment to flush before disconnect.
-      await sleep(200);
+      // Give the printer PLENTY of time to flush its internal hardware buffer before we drop the socket connection.
+      // If we disconnect too early, half the receipt won't print and it will skip the cut!
+      await sleep(1500); 
       localStorage.setItem(BT_LAST_ADDRESS_KEY, address);
       await btDisconnect(bt);
       return;
