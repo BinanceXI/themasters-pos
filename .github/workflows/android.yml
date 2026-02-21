@@ -73,10 +73,13 @@ jobs:
             "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
 
       - name: Build Android DEBUG APK
+        env:
+          GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
         working-directory: android
         run: |
           chmod +x ./gradlew
-          ./gradlew clean assembleDebug
+          rm -rf "$GRADLE_USER_HOME/caches" "$GRADLE_USER_HOME/wrapper" || true
+          ./gradlew --no-daemon --stacktrace clean assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
