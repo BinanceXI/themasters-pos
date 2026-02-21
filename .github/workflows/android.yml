@@ -43,9 +43,6 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Ensure Android platform exists
-        run: npx cap add android || echo "Android already added"
-
       - name: Sync Capacitor Android
         run: npx cap sync android
 

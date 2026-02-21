@@ -37,7 +37,7 @@ jobs:
         run: npm run build
 
       - name: Build Tauri (Windows)
-        run: npx tauri build --bundles msi,nsis,zip
+        run: npx tauri build --bundles msi,nsis
 
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v4
