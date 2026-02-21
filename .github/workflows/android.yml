@@ -65,13 +65,6 @@ jobs:
             fi
           fi
 
-      - name: Patch legacy proguard-android.txt everywhere
-        run: |
-          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
-            "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g"
-          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
-            "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
-
       - name: Build Android DEBUG APK
         env:
           GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
