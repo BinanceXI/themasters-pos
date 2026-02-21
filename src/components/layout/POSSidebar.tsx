@@ -75,7 +75,7 @@ export const POSSidebar = () => {
               alt="TheMasters Logo"
               className={cn(
                 "object-contain filter drop-shadow-[0_4px_16px_rgba(255,255,255,0.5)] cursor-pointer",
-                collapsed ? "w-10 h-10" : "w-16 h-16"
+                collapsed ? "w-8 h-8" : "w-12 h-12"
               )}
             />
           </div>
