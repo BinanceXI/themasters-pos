@@ -37,11 +37,11 @@ jobs:
       - name: Build web (Vite)
         run: npm run build
 
-      - name: Setup Java 21
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 17
 
       - name: Ensure Android platform exists
         run: npx cap add android || echo "Android already added"
