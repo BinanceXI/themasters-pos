@@ -67,15 +67,15 @@ export const POSSidebar = () => {
       >
         {/* ===== BRAND HEADER (WITH LOGO POP) ===== */}
         <div className={cn("px-4 pt-6 pb-4 border-b border-white/10", collapsed && "px-3")}>
-          <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-center mb-4")}>
+          <div className={cn("flex items-center", collapsed ? "justify-center" : "justify-center mb-2")}>
             <motion.img
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               src={themastersLogo}
               alt="TheMasters Logo"
               className={cn(
-                "object-contain filter drop-shadow-[0_4px_20px_rgba(255,255,255,0.6)] cursor-pointer",
-                collapsed ? "w-12 h-12" : "w-28 h-28"
+                "object-contain filter drop-shadow-[0_4px_16px_rgba(255,255,255,0.5)] cursor-pointer",
+                collapsed ? "w-8 h-8" : "w-12 h-12"
               )}
             />
           </div>

@@ -449,7 +449,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
               whileTap={{ scale: 0.95 }}
               src={themastersLogo}
               alt="TheMasters POS"
-              className="w-[560px] max-w-full drop-shadow-[0_24px_60px_rgba(0,0,0,0.8)] cursor-pointer"
+              className="w-[640px] max-w-full drop-shadow-[0_24px_60px_rgba(0,0,0,0.8)] cursor-pointer"
               style={{ filter: "invert(1) hue-rotate(180deg) contrast(1.25)" }}
             />
           </motion.div>
@@ -490,7 +490,7 @@ export const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
               whileTap={{ scale: 0.95 }}
               src={themastersLogo}
               alt="TheMasters POS"
-              className="w-[360px] drop-shadow-[0_16px_40px_rgba(0,0,0,0.6)]"
+              className="w-[440px] drop-shadow-[0_16px_40px_rgba(0,0,0,0.6)]"
               style={{ filter: "invert(1) hue-rotate(180deg) contrast(1.25)" }}
             />
           </div>
