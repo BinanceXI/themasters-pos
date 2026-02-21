@@ -1,15 +1,30 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "TheMasters POS",
-  "version": "0.1.0",
-  "identifier": "com.nitiance.themasterspos",
+  "package": {
+    "productName": "TheMasters POS",
+    "version": "0.1.0"
+  },
   "build": {
-  "frontendDist": "../dist",
-  "devUrl": "http://localhost:8080",
-  "beforeDevCommand": "npm run dev",
-  "beforeBuildCommand": "npm run build"
-},
-  "app": {
+    "distDir": "../dist",
+    "devPath": "http://localhost:8080",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "targets": ["msi", "nsis", "zip"],
+      "identifier": "com.nitiance.themasterspos",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ]
+    },
+    "allowlist": {
+      "all": true
+    },
     "windows": [
       {
         "title": "TheMasters POS",
@@ -22,16 +37,5 @@
     "security": {
       "csp": null
     }
-  },
-  "bundle": {
-    "active": true,
-    "targets": ["nsis", "msi", "zip"],
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
   }
 }

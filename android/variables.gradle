@@ -2,13 +2,13 @@ ext {
     javaVersion = JavaVersion.VERSION_17
 
     minSdkVersion = 24
-    compileSdkVersion = 35
-    targetSdkVersion = 35
-    androidxActivityVersion = '1.9.3'
-    androidxAppCompatVersion = '1.7.1'
-    androidxCoordinatorLayoutVersion = '1.3.0'
-    androidxCoreVersion = '1.15.0'
-    androidxFragmentVersion = '1.8.5'
+    compileSdkVersion = 34
+    targetSdkVersion = 34
+    androidxActivityVersion = '1.8.0'
+    androidxAppCompatVersion = '1.6.1'
+    androidxCoordinatorLayoutVersion = '1.2.0'
+    androidxCoreVersion = '1.12.0'
+    androidxFragmentVersion = '1.6.2'
     coreSplashScreenVersion = '1.2.0'
     androidxWebkitVersion = '1.14.0'
     junitVersion = '4.13.2'
