@@ -42,6 +42,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Verify Java
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
       # Ensure android/ exists even on clean runners
       - name: Ensure Android platform exists
         run: npx cap add android || echo "Android already added"
