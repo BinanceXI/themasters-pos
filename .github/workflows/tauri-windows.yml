@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
+          
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -35,29 +35,8 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Show tauri.conf.json used by CI
-        shell: bash
-        run: |
-          echo "=== pwd ==="
-          pwd
-          echo "=== list src-tauri ==="
-          ls -la src-tauri
-          echo "=== tauri.conf.json ==="
-          cat src-tauri/tauri.conf.json
-      - name: Show tauri config used
-        shell: bash
-        run: |
-          ls -la
-          ls -la src-tauri
-          echo "----- src-tauri/tauri.conf.json -----"
-          cat src-tauri/tauri.conf.json
-          echo "----- grep identifier/targets -----"
-          grep -R --line-number '"targets"' . || true
-          grep -R --line-number '"identifier"' src-tauri/tauri.conf.json || true
       - name: Build Tauri (Windows)
-        shell: bash
-        run: |
-          npx -y @tauri-apps/cli@1.5.14 build --config src-tauri/tauri.conf.json --bundles msi,nsis
+        run: npx tauri build --bundles msi,nsis
 
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v4
