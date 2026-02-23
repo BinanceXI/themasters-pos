@@ -84,7 +84,7 @@ jobs:
           chmod +x ./gradlew
           echo "JAVA_HOME=$JAVA_HOME"
           "$JAVA_HOME/bin/java" -version
-          rm -rf "$GRADLE_USER_HOME/caches" "$GRADLE_USER_HOME/wrapper" || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper "$GRADLE_USER_HOME/caches" "$GRADLE_USER_HOME/wrapper" || true
           ./gradlew --no-daemon --stacktrace \
             -Dorg.gradle.java.home="$JAVA_HOME" \
             -Dorg.gradle.classpath.injection=false \
