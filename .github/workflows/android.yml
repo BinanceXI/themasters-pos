@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      # ✅ Make Vite actually receive these during build
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
@@ -26,6 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Optional: show that env exists (won't print secret value)
       - name: Check env exists
         run: |
           test -n "$VITE_SUPABASE_URL"
@@ -35,29 +37,19 @@ jobs:
       - name: Build web (Vite)
         run: npm run build
 
-      # Use Java 17 to avoid Gradle 8.2.x failing on Java 21 classfiles (major 65)
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
-      - name: Verify Java (hard)
-        shell: bash
-        run: |
-          set -e
-          echo "JAVA_HOME=$JAVA_HOME"
-          ls -la "$JAVA_HOME/bin"
-          "$JAVA_HOME/bin/java" -version
-          java -version
-
-      # Ensure android/ exists even on clean runners
       - name: Ensure Android platform exists
         run: npx cap add android || echo "Android already added"
 
       - name: Sync Capacitor Android
         run: npx cap sync android
 
+      # Fix duplicate style blocks (safe)
       - name: Fix duplicate AppTheme.NoActionBar in styles.xml
         run: |
           FILE="android/app/src/main/res/values/styles.xml"
@@ -74,23 +66,20 @@ jobs:
             fi
           fi
 
-      - name: Build Android DEBUG APK
-        env:
-          GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
-        working-directory: android
-        shell: bash
+      # Patch legacy proguard default everywhere (capacitor + plugins)
+      - name: Patch legacy proguard-android.txt everywhere
         run: |
-          set -e
-          chmod +x ./gradlew
-          echo "JAVA_HOME=$JAVA_HOME"
-          "$JAVA_HOME/bin/java" -version
-          rm -rf ~/.gradle/caches ~/.gradle/wrapper "$GRADLE_USER_HOME/caches" "$GRADLE_USER_HOME/wrapper" || true
-          ./gradlew --no-daemon --stacktrace \
-            -Dorg.gradle.java.home="$JAVA_HOME" \
-            -Dorg.gradle.classpath.injection=false \
-            clean assembleDebug
+          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
+            "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g"
+          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
+            "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
 
-      - name: Upload APK artifact
+      # ✅ Build DEBUG (easy install)
+      - name: Build Android DEBUG APK
+        working-directory: android
+        run: ./gradlew clean assembleDebug
+
+      - name: Upload DEBUG APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-apk-debug
