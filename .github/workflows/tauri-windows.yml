@@ -45,7 +45,9 @@ jobs:
           echo "=== tauri.conf.json ==="
           cat src-tauri/tauri.conf.json
       - name: Build Tauri (Windows)
-        run: npx -y @tauri-apps/cli@^1.5.0 build --bundles msi,nsis
+        shell: bash
+        run: |
+          npx -y @tauri-apps/cli@1.5.14 build --config src-tauri/tauri.conf.json --bundles msi,nsis
 
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v4
