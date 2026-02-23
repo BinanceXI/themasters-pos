@@ -42,10 +42,14 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Verify Java
+      - name: Verify Java (hard)
+        shell: bash
         run: |
-          java -version
+          set -e
           echo "JAVA_HOME=$JAVA_HOME"
+          ls -la "$JAVA_HOME/bin"
+          "$JAVA_HOME/bin/java" -version
+          java -version
 
       # Ensure android/ exists even on clean runners
       - name: Ensure Android platform exists
@@ -74,10 +78,14 @@ jobs:
         env:
           GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
         working-directory: android
+        shell: bash
         run: |
+          set -e
           chmod +x ./gradlew
+          echo "JAVA_HOME=$JAVA_HOME"
+          "$JAVA_HOME/bin/java" -version
           rm -rf "$GRADLE_USER_HOME/caches" "$GRADLE_USER_HOME/wrapper" || true
-          ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" --stacktrace clean assembleDebug
+          ./gradlew --no-daemon --stacktrace -Dorg.gradle.java.home="$JAVA_HOME" clean assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
