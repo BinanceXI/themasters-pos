@@ -74,10 +74,17 @@ jobs:
           find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
             "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
 
-      # ✅ Build DEBUG (easy install)
       - name: Build Android DEBUG APK
         working-directory: android
-        run: ./gradlew clean assembleDebug
+        shell: bash
+        run: |
+          set -e
+          chmod +x ./gradlew
+          echo "JAVA_HOME=$JAVA_HOME"
+          "$JAVA_HOME/bin/java" -version
+          ./gradlew --no-daemon --stacktrace \
+            -Dorg.gradle.java.home="$JAVA_HOME" \
+            clean assembleDebug
 
       - name: Upload DEBUG APK artifact
         uses: actions/upload-artifact@v4
