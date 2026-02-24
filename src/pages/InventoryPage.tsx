@@ -56,7 +56,9 @@ import { BarcodeScanner } from "@/components/pos/BarcodeScanner";
 import {
   enqueueInventoryMutation,
   getInventoryQueueCount,
+  listInventoryQueueFailures,
   processInventoryQueue,
+  readInventoryQueue,
   type ProductUpsertPayload,
 } from "@/lib/inventorySync";
 
@@ -94,6 +96,8 @@ export const InventoryPage = () => {
 
   // Optional: show/hide archived (admin only)
   const [showArchived, setShowArchived] = useState(false);
+  const [showQueueErrorsDialog, setShowQueueErrorsDialog] = useState(false);
+  const [queueSnapshot, setQueueSnapshot] = useState(() => readInventoryQueue());
 
   const [newItem, setNewItem] = useState({
     id: "",
@@ -153,6 +157,17 @@ export const InventoryPage = () => {
   const processQueue = useCallback(async () => {
     await processInventoryQueue({ queryClient });
   }, [queryClient]);
+
+  useEffect(() => {
+    const refreshQueueSnapshot = () => setQueueSnapshot(readInventoryQueue());
+    refreshQueueSnapshot();
+    window.addEventListener("themasters:queue_changed", refreshQueueSnapshot as any);
+    window.addEventListener("storage", refreshQueueSnapshot as any);
+    return () => {
+      window.removeEventListener("themasters:queue_changed", refreshQueueSnapshot as any);
+      window.removeEventListener("storage", refreshQueueSnapshot as any);
+    };
+  }, []);
 
   // ------- Profit calcs -------
   const formPrice = parseFloat(newItem.price) || 0;
@@ -512,7 +527,9 @@ export const InventoryPage = () => {
     (p: any) => p.type === "good" && (p.stock_quantity || 0) === 0
   ).length;
 
-  const queuedCount = getInventoryQueueCount();
+  const queuedCount = queueSnapshot.length || getInventoryQueueCount();
+  const queueFailures = useMemo(() => listInventoryQueueFailures(), [queueSnapshot]);
+  const queueFailedCount = queueFailures.length;
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-6 pb-20">
@@ -552,6 +569,21 @@ export const InventoryPage = () => {
             >
               <CloudUpload className="w-4 h-4" /> Sync ({queuedCount})
             </Button>
+          )}
+          {queueFailedCount > 0 && (
+            <>
+              <div className="flex items-center gap-2 text-red-700 dark:text-red-300 bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg text-xs">
+                <AlertTriangle className="w-4 h-4" /> {queueFailedCount} failed
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => setShowQueueErrorsDialog(true)}
+              >
+                View details
+              </Button>
+            </>
           )}
 
           {isAdmin && (
@@ -1128,6 +1160,36 @@ export const InventoryPage = () => {
         onClose={() => setShowScanner(false)}
         onScan={handleScanSKU}
       />
+
+      <Dialog open={showQueueErrorsDialog} onOpenChange={setShowQueueErrorsDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Inventory Sync Errors</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[60vh] overflow-auto pr-1">
+            {queueFailures.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No queued sync errors.</div>
+            ) : (
+              queueFailures.map((f, idx) => (
+                <div key={`${f.kind}-${f.itemId}-${idx}`} className="rounded-lg border p-3 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="font-mono text-[10px]">
+                      {f.kind}
+                    </Badge>
+                    <span className="font-mono text-xs break-all">{f.itemId}</span>
+                  </div>
+                  <div className="mt-2 text-xs text-red-700 dark:text-red-300 break-words">{f.lastError}</div>
+                  {f.lastAttemptAt && (
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      Last attempt: {new Date(f.lastAttemptAt).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

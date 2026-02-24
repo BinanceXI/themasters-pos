@@ -237,8 +237,12 @@ export function ServiceBookingsDialog({
 
     setSubmitting(true);
     try {
+      let pendingSync = !navigator.onLine;
       await upsertLocalServiceBooking(booking);
-      if (navigator.onLine) await pushUnsyncedServiceBookings();
+      if (navigator.onLine) {
+        const pushRes = await pushUnsyncedServiceBookings();
+        pendingSync = pushRes.failed > 0;
+      }
 
       if (dep > 0) {
         const receiptId = makeReceiptId();
@@ -280,7 +284,8 @@ export function ServiceBookingsDialog({
         });
       }
 
-      toast.success("Booking created");
+      if (pendingSync) toast.warning("Saved locally — pending sync");
+      else toast.success("Booking created");
       onAfterCreateBooking?.();
       onOpenChange(false);
       setDepositRaw("0");
@@ -299,9 +304,14 @@ export function ServiceBookingsDialog({
       lastError: undefined,
       updated_at: new Date().toISOString(),
     };
+    let pendingSync = !navigator.onLine;
     await upsertLocalServiceBooking(updated);
-    if (navigator.onLine) await pushUnsyncedServiceBookings();
+    if (navigator.onLine) {
+      const pushRes = await pushUnsyncedServiceBookings();
+      pendingSync = pushRes.failed > 0;
+    }
     await reloadBookings();
+    return { pendingSync };
   };
 
   const beginComplete = (b: LocalServiceBooking) => {
@@ -371,8 +381,9 @@ export function ServiceBookingsDialog({
         });
       }
 
-      await updateStatus(completeTarget, "completed");
-      toast.success("Booking completed");
+      const statusRes = await updateStatus(completeTarget, "completed");
+      if (statusRes.pendingSync) toast.warning("Saved locally — pending sync");
+      else toast.success("Booking completed");
       setCompleteOpen(false);
       setCompleteTarget(null);
     } catch (e: any) {
@@ -555,8 +566,9 @@ export function ServiceBookingsDialog({
                             className="gap-2"
                             onClick={async () => {
                               try {
-                                await updateStatus(b, "cancelled");
-                                toast.message("Booking cancelled");
+                                const statusRes = await updateStatus(b, "cancelled");
+                                if (statusRes.pendingSync) toast.warning("Saved locally — pending sync");
+                                else toast.message("Booking cancelled");
                               } catch (e: any) {
                                 toast.error(e?.message || "Failed to cancel booking");
                               }

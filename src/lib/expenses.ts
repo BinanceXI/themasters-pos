@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { requireAuthedSessionOrBlockSync, type SyncBlockedReason } from "@/lib/supabaseSession";
 
 export type ExpenseType = "expense" | "owner_drawing";
 
@@ -26,6 +27,21 @@ export type ExpenseRange = {
 type ExpenseQueueItem =
   | { id: string; op: "upsert"; expense: Expense; ts: number; lastError?: string }
   | { id: string; op: "delete"; ts: number; lastError?: string };
+
+export type ExpenseQueuePendingError = {
+  id: string;
+  op: "upsert" | "delete";
+  lastError: string;
+  ts: number;
+};
+
+export type ExpenseSyncResult = {
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  failures: Array<{ id: string; error: string }>;
+  blockedReason?: SyncBlockedReason;
+};
 
 const DB_NAME = "themasters_pos_expenses";
 const DB_VERSION = 1;
@@ -398,8 +414,21 @@ export function getExpenseQueueCount(): number {
   return queueCount;
 }
 
-export async function syncExpenses(): Promise<void> {
-  if (!navigator.onLine) return;
+export async function listExpenseQueuePendingErrors(): Promise<ExpenseQueuePendingError[]> {
+  const queue = await listQueueLocal();
+  return queue
+    .filter((item) => !!String(item?.lastError || "").trim())
+    .map((item) => ({
+      id: item.id,
+      op: item.op,
+      lastError: String(item.lastError || "Request failed"),
+      ts: Number(item.ts || 0),
+    }))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+}
+
+export async function syncExpenses(): Promise<ExpenseSyncResult> {
+  if (!navigator.onLine) return { attempted: 0, succeeded: 0, failed: 0, failures: [] };
 
   const queue = await listQueueLocal();
   if (!queue.length) {
@@ -409,8 +438,25 @@ export async function syncExpenses(): Promise<void> {
     } catch {
       // pull failures shouldn't block the rest of the app
     }
-    return;
+    return { attempted: 0, succeeded: 0, failed: 0, failures: [] };
   }
+
+  const authGate = await requireAuthedSessionOrBlockSync();
+  if (!authGate.ok) {
+    await Promise.all(
+      queue.map((item) => upsertQueueLocal({ ...item, lastError: authGate.message } as any))
+    );
+    return {
+      attempted: queue.length,
+      succeeded: 0,
+      failed: queue.length,
+      failures: queue.map((item) => ({ id: item.id, error: authGate.message })),
+      blockedReason: authGate.reason,
+    };
+  }
+
+  let succeeded = 0;
+  const failures: Array<{ id: string; error: string }> = [];
 
   for (const item of queue.sort((a, b) => (a.ts || 0) - (b.ts || 0))) {
     try {
@@ -425,16 +471,19 @@ export async function syncExpenses(): Promise<void> {
 
         await upsertExpenseLocal(row as Expense);
         await deleteQueueLocal(item.id);
+        succeeded += 1;
       }
 
       if (item.op === "delete") {
         const { error } = await supabase.from("expenses").delete().eq("id", item.id);
         if (error) throw error;
         await deleteQueueLocal(item.id);
+        succeeded += 1;
       }
     } catch (e: any) {
       const msg = e?.message || String(e);
       await upsertQueueLocal({ ...item, lastError: msg } as any);
+      failures.push({ id: item.id, error: msg });
     }
   }
 
@@ -444,6 +493,13 @@ export async function syncExpenses(): Promise<void> {
   } catch {
     // ignore
   }
+
+  return {
+    attempted: queue.length,
+    succeeded,
+    failed: failures.length,
+    failures,
+  };
 }
 
 async function pullRecentExpenses(daysBack: number): Promise<void> {

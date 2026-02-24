@@ -7,6 +7,7 @@ import {
   addExpense,
   deleteExpense,
   getExpenseQueueCount,
+  listExpenseQueuePendingErrors,
   listExpenses,
   syncExpenses,
   updateExpense,
@@ -88,6 +89,7 @@ export const ExpensesPage = () => {
   });
 
   const [queueCount, setQueueCount] = useState<number>(() => getExpenseQueueCount());
+  const [queueErrors, setQueueErrors] = useState<Array<{ id: string; op: "upsert" | "delete"; lastError: string; ts: number }>>([]);
   const [syncing, setSyncing] = useState(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -180,6 +182,17 @@ export const ExpensesPage = () => {
   }, [filtered, revenue]);
 
   const refreshQueueCount = useCallback(() => setQueueCount(getExpenseQueueCount()), []);
+  const refreshQueueErrors = useCallback(async () => {
+    try {
+      setQueueErrors(await listExpenseQueuePendingErrors());
+    } catch {
+      setQueueErrors([]);
+    }
+  }, []);
+  const refreshQueueState = useCallback(async () => {
+    refreshQueueCount();
+    await refreshQueueErrors();
+  }, [refreshQueueCount, refreshQueueErrors]);
 
   const openAdd = () => {
     setEditing(null);
@@ -251,13 +264,14 @@ export const ExpensesPage = () => {
       }
 
       refreshQueueCount();
+      void refreshQueueErrors();
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey?.[0] === "expenses" });
       setDialogOpen(false);
 
       if (navigator.onLine) {
         try {
           await syncExpenses();
-          refreshQueueCount();
+          await refreshQueueState();
         } catch {
           // queued; sync will retry
         }
@@ -275,12 +289,13 @@ export const ExpensesPage = () => {
     try {
       await deleteExpense(id);
       refreshQueueCount();
+      void refreshQueueErrors();
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey?.[0] === "expenses" });
 
       if (navigator.onLine) {
         try {
           await syncExpenses();
-          refreshQueueCount();
+          await refreshQueueState();
         } catch {
           // queued; sync will retry
         }
@@ -296,16 +311,22 @@ export const ExpensesPage = () => {
     if (!navigator.onLine) return toast.error("Offline");
     setSyncing(true);
     try {
-      await syncExpenses();
-      refreshQueueCount();
+      const res = await syncExpenses();
+      await refreshQueueState();
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey?.[0] === "expenses" });
-      toast.success("Synced");
+      if (res.blockedReason === "AUTH_REQUIRED") {
+        toast.error("Sync paused — sign in online to resume.");
+      } else if (res.failed > 0) {
+        toast.warning(`Synced ${res.succeeded}, failed ${res.failed} — see pending/errors`);
+      } else {
+        toast.success(`Synced ${res.succeeded} items`);
+      }
     } catch (e: any) {
       toast.error(e?.message || "Sync failed");
     } finally {
       setSyncing(false);
     }
-  }, [queryClient, refreshQueueCount]);
+  }, [queryClient, refreshQueueState]);
 
   useEffect(() => {
     const onOnline = () => doSyncNow();
@@ -313,6 +334,15 @@ export const ExpensesPage = () => {
     if (navigator.onLine) doSyncNow();
     return () => window.removeEventListener("online", onOnline);
   }, [doSyncNow]);
+
+  useEffect(() => {
+    void refreshQueueState();
+    const onQueueChanged = () => {
+      void refreshQueueState();
+    };
+    window.addEventListener("themasters:queue_changed", onQueueChanged as any);
+    return () => window.removeEventListener("themasters:queue_changed", onQueueChanged as any);
+  }, [refreshQueueState]);
 
   return (
     <div className="p-4 md:p-6 space-y-5 pb-24 lg:pb-6">
@@ -356,7 +386,33 @@ export const ExpensesPage = () => {
             {queueCount}
           </span>
         </div>
+        {queueErrors.length > 0 && (
+          <div className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-red-600">
+            <span className="text-xs">Pending errors</span>
+            <span className="font-semibold">{queueErrors.length}</span>
+          </div>
+        )}
       </div>
+
+      {queueErrors.length > 0 && (
+        <Card className="border-red-500/20 bg-red-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-red-700 dark:text-red-300">Pending Sync Errors</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {queueErrors.slice(0, 5).map((item) => (
+              <div key={`${item.id}-${item.ts}`} className="rounded-md border border-red-500/15 px-3 py-2 text-xs">
+                <div className="font-mono break-all">{item.id}</div>
+                <div className="text-muted-foreground">{item.op}</div>
+                <div className="mt-1 text-red-700 dark:text-red-300 break-words">{item.lastError}</div>
+              </div>
+            ))}
+            {queueErrors.length > 5 && (
+              <div className="text-xs text-muted-foreground">Showing 5 of {queueErrors.length} pending errors.</div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Card className="premium-surface border-white/10 dark:border-white/5">

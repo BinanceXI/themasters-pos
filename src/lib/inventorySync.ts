@@ -1,7 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
-import { ensureSupabaseSession } from "@/lib/supabaseSession";
+import {
+  requireAuthedSessionOrBlockSync,
+  SYNC_PAUSED_AUTH_MESSAGE,
+  type SyncBlockedReason,
+} from "@/lib/supabaseSession";
 
 export const PRODUCTS_QUEUE_KEY = "themasters_products_mutation_queue_v2";
 
@@ -23,10 +27,29 @@ export type ProductUpsertPayload = {
   is_archived?: boolean | null;
 };
 
+type InventoryMutationMeta = {
+  ts: number;
+  lastError?: string;
+  lastAttemptAt?: string;
+};
+
 export type InventoryOfflineMutation =
-  | { kind: "upsert_product"; payload: ProductUpsertPayload; ts: number }
-  | { kind: "archive_product"; id: string; ts: number }
-  | { kind: "set_stock"; id: string; stock_quantity: number; ts: number };
+  | ({ kind: "upsert_product"; payload: ProductUpsertPayload } & InventoryMutationMeta)
+  | ({ kind: "archive_product"; id: string } & InventoryMutationMeta)
+  | ({ kind: "set_stock"; id: string; stock_quantity: number } & InventoryMutationMeta);
+
+export type InventoryQueueFailure = {
+  kind: InventoryOfflineMutation["kind"];
+  itemId: string;
+  lastError: string;
+  lastAttemptAt?: string;
+};
+
+type ProcessInventoryQueueResult = {
+  processed: number;
+  failed: number;
+  blockedReason?: SyncBlockedReason;
+};
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -45,9 +68,23 @@ function notifyQueueChanged() {
   }
 }
 
+function errorToMessage(e: unknown) {
+  const msg = String((e as any)?.message || "").trim();
+  if (msg) return msg;
+  return String(e || "Request failed");
+}
+
+function withErrorMeta(m: InventoryOfflineMutation, message: string): InventoryOfflineMutation {
+  return {
+    ...m,
+    lastError: String(message || "Request failed"),
+    lastAttemptAt: new Date().toISOString(),
+  } as InventoryOfflineMutation;
+}
+
 export function enqueueInventoryMutation(m: InventoryOfflineMutation) {
   const q = safeParse<InventoryOfflineMutation[]>(localStorage.getItem(PRODUCTS_QUEUE_KEY), []);
-  q.push(m);
+  q.push({ ...(m as any), lastError: undefined, lastAttemptAt: undefined } as InventoryOfflineMutation);
   localStorage.setItem(PRODUCTS_QUEUE_KEY, JSON.stringify(q));
   notifyQueueChanged();
 }
@@ -65,7 +102,30 @@ export function getInventoryQueueCount(): number {
   return readInventoryQueue().length;
 }
 
-export async function processInventoryQueue(opts?: { silent?: boolean; queryClient?: QueryClient }) {
+export function getInventoryQueueFailedCount(): number {
+  return readInventoryQueue().filter((m) => !!String((m as any)?.lastError || "").trim()).length;
+}
+
+export function listInventoryQueueFailures(): InventoryQueueFailure[] {
+  return readInventoryQueue()
+    .filter((m) => !!String((m as any)?.lastError || "").trim())
+    .map((m) => ({
+      kind: m.kind,
+      itemId: m.kind === "upsert_product" ? String(m.payload.id) : String(m.id),
+      lastError: String(m.lastError || "Request failed"),
+      lastAttemptAt: m.lastAttemptAt || undefined,
+    }));
+}
+
+export function annotateInventoryQueueError(msg: string) {
+  const message = String(msg || "").trim();
+  if (!message) return;
+  const queue = readInventoryQueue();
+  if (!queue.length) return;
+  writeInventoryQueue(queue.map((m) => withErrorMeta(m, message)));
+}
+
+export async function processInventoryQueue(opts?: { silent?: boolean; queryClient?: QueryClient }): Promise<ProcessInventoryQueueResult> {
   const silent = !!opts?.silent;
   const queryClient = opts?.queryClient;
 
@@ -74,10 +134,11 @@ export async function processInventoryQueue(opts?: { silent?: boolean; queryClie
   const queue = readInventoryQueue();
   if (!queue.length) return { processed: 0, failed: 0 };
 
-  const sessionRes = await ensureSupabaseSession();
-  if (!sessionRes.ok) {
-    if (!silent) toast.error(`Sync issue — check network or sign in again.`);
-    // DO NOT return — still attempt sync using anon role if allowed by RLS
+  const authGate = await requireAuthedSessionOrBlockSync();
+  if (!authGate.ok) {
+    annotateInventoryQueueError(authGate.message);
+    if (!silent) toast.error(SYNC_PAUSED_AUTH_MESSAGE);
+    return { processed: 0, failed: queue.length, blockedReason: authGate.reason };
   }
 
   const toastId = silent ? null : toast.loading(`Syncing ${queue.length} inventory changes...`);
@@ -101,8 +162,7 @@ export async function processInventoryQueue(opts?: { silent?: boolean; queryClie
           if (error) throw error;
         }
       } catch (e) {
-        console.error("Inventory queue item failed", m, e);
-        failed.push(m);
+        failed.push(withErrorMeta(m, errorToMessage(e)));
       }
     }
 

@@ -27,7 +27,7 @@ import { NotificationPanel } from "@/components/ui/NotificationPanel";
 import { cn } from "@/lib/utils";
 
 export const TopBar = () => {
-  const { currentUser, syncStatus, setCurrentUser, pendingSyncCount } = usePOS();
+  const { currentUser, syncStatus, syncBlockedReason, setCurrentUser, pendingSyncCount } = usePOS();
 
   // ✅ keep theme in sync with the DOM (no random default)
   const [isDark, setIsDark] = useState(() =>
@@ -163,7 +163,9 @@ export const TopBar = () => {
 
           {/* optional quick hint (desktop) */}
           <div className="hidden md:block text-xs text-muted-foreground truncate">
-            {syncStatus === "offline"
+            {syncBlockedReason === "AUTH_REQUIRED"
+              ? "Sync paused — sign in online to resume."
+              : syncStatus === "offline"
               ? "Working offline — sales will sync when back online."
               : syncStatus === "syncing"
               ? "Uploading offline sales…"

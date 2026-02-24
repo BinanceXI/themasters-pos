@@ -11,7 +11,12 @@ import React, {
 } from "react";
 import type { CartItem, Product, SyncStatus, Sale, POSMode, Discount } from "@/types/pos";
 import { supabase } from "@/lib/supabase";
-import { ensureSupabaseSession } from "@/lib/supabaseSession";
+import {
+  ensureSupabaseSession,
+  requireAuthedSessionOrBlockSync,
+  type SyncBlockedReason,
+  SYNC_PAUSED_AUTH_MESSAGE,
+} from "@/lib/supabaseSession";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { getExpenseQueueCount, syncExpenses } from "@/lib/expenses";
@@ -118,6 +123,7 @@ interface POSContextType {
 
   syncStatus: SyncStatus;
   setSyncStatus: (status: SyncStatus) => void;
+  syncBlockedReason: SyncBlockedReason | null;
   pendingSyncCount: number;
 
   heldSales: Sale[];
@@ -323,6 +329,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
   });
   const [cart, setCart] = useState<CartItem[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("online");
+  const [syncBlockedReason, setSyncBlockedReason] = useState<SyncBlockedReason | null>(null);
 
   const [heldSales, setHeldSales] = useState<Sale[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -342,6 +349,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     _setCurrentUser(user);
     if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
     else localStorage.removeItem(USER_KEY);
+    if (!user) setSyncBlockedReason(null);
   };
 
   const can = (permission: keyof UserPermissions) => {
@@ -602,18 +610,23 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         const hasPendingWork = countsBefore.total > 0;
 
         if (hasPendingWork) {
-          const sessionRes = await ensureSupabaseSession();
-          if (!sessionRes.ok) {
+          const authGate = await requireAuthedSessionOrBlockSync();
+          if (!authGate.ok) {
             anyFailed = true;
+            setSyncBlockedReason(authGate.reason);
+            annotateSalesQueueError(authGate.message);
 
             const now = Date.now();
             const showToast = !silent || now - lastCloudAuthNoticeRef.current > 5 * 60_000;
             if (showToast) {
               lastCloudAuthNoticeRef.current = now;
-              toast.error(`Sync issue — check network or sign in again.`);
+              toast.error(SYNC_PAUSED_AUTH_MESSAGE);
             }
-            // DO NOT return — still attempt sync using anon role if allowed by RLS
+            return;
           }
+          setSyncBlockedReason(null);
+        } else {
+          setSyncBlockedReason(null);
         }
 
         // Sales
@@ -626,21 +639,34 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
         // Inventory
         try {
-          await processInventoryQueue({ silent, queryClient });
+          const inventoryRes = await processInventoryQueue({ silent, queryClient });
+          if ((inventoryRes as any)?.blockedReason) {
+            anyFailed = true;
+            setSyncBlockedReason("AUTH_REQUIRED");
+            return;
+          }
+          if ((inventoryRes as any)?.failed > 0) anyFailed = true;
         } catch {
           anyFailed = true;
         }
 
         // Expenses
         try {
-          await syncExpenses();
+          const expenseRes = await syncExpenses();
+          if ((expenseRes as any)?.blockedReason) {
+            anyFailed = true;
+            setSyncBlockedReason("AUTH_REQUIRED");
+            return;
+          }
+          if (expenseRes.failed > 0) anyFailed = true;
         } catch {
           anyFailed = true;
         }
 
         // Service bookings
         try {
-          await pushUnsyncedServiceBookings();
+          const pushRes = await pushUnsyncedServiceBookings();
+          if (pushRes.failed > 0) anyFailed = true;
         } catch {
           anyFailed = true;
         }
@@ -653,7 +679,10 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         globalSyncingRef.current = false;
         const counts = await refreshPendingSyncCount();
 
-        if (!navigator.onLine) setSyncStatus("offline");
+        if (!navigator.onLine) {
+          setSyncBlockedReason(null);
+          setSyncStatus("offline");
+        }
         else if (anyFailed || counts.total > 0) setSyncStatus("error");
         else setSyncStatus("online");
       }
@@ -667,6 +696,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     const update = async () => {
       const online = navigator.onLine;
       setSyncStatus(online ? "online" : "offline");
+      if (!online) setSyncBlockedReason(null);
       if (online) await runGlobalSync({ silent: true });
     };
 
@@ -920,15 +950,34 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
 
         const normalizedSaleType: SaleType = saleData.saleType === "service" ? "service" : "product";
         let orderId = "";
-        try {
-          const inserted = await insertOrderWithSaleTypeFallback(orderRow, normalizedSaleType);
-          orderId = inserted.id;
-          console.log("[orders insert online] sale_type =", inserted.saleTypeUsed);
-        } catch (orderErr: any) {
-          console.error("[orders insert ONLINE] error object:", orderErr);
-          console.error("[orders insert ONLINE] orderRow payload:", orderRow);
-          throw orderErr;
+        const { data: existingOrder, error: existingOrderErr } = await supabase
+          .schema("public")
+          .from("orders")
+          .select("id")
+          .eq("receipt_id", String(saleData.meta.receiptId))
+          .maybeSingle();
+        if (existingOrderErr) throw existingOrderErr;
+
+        if (existingOrder?.id) {
+          orderId = String(existingOrder.id);
+        } else {
+          try {
+            const inserted = await insertOrderWithSaleTypeFallback(orderRow, normalizedSaleType);
+            orderId = inserted.id;
+            console.log("[orders insert online] sale_type =", inserted.saleTypeUsed);
+          } catch (orderErr: any) {
+            console.error("[orders insert ONLINE] error object:", orderErr);
+            console.error("[orders insert ONLINE] orderRow payload:", orderRow);
+            throw orderErr;
+          }
         }
+
+        const { error: delErr } = await supabase
+          .schema("public")
+          .from("order_items")
+          .delete()
+          .eq("order_id", orderId);
+        if (delErr) throw delErr;
 
         const { error: itemsErr } = await supabase
         .schema("public")
@@ -1050,6 +1099,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       clearCart,
       syncStatus,
       setSyncStatus,
+      syncBlockedReason,
       pendingSyncCount,
       heldSales,
       holdCurrentSale,
@@ -1071,6 +1121,7 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       currentUser,
       cart,
       syncStatus,
+      syncBlockedReason,
       pendingSyncCount,
       heldSales,
       selectedCategory,
