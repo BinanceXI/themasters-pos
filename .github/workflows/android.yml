@@ -43,6 +43,13 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Setup Java 17 for Gradle (to avoid Java 21 bytecode issues)
+        uses: actions/setup-java@v4
+        id: setup_java_17
+        with:
+          distribution: temurin
+          java-version: 17
+
       - name: Ensure Android platform exists
         run: npx cap add android || echo "Android already added"
 
@@ -81,10 +88,10 @@ jobs:
         run: |
           set -e
           chmod +x ./gradlew
-          echo "JAVA_HOME=$JAVA_HOME"
-          "$JAVA_HOME/bin/java" -version
+          echo "JAVA_HOME for Gradle: ${{ steps.setup_java_17.outputs.path }}"
+          "${{ steps.setup_java_17.outputs.path }}/bin/java" -version
           ./gradlew --no-daemon --stacktrace \
-            -Dorg.gradle.java.home="$JAVA_HOME" \
+            -Dorg.gradle.java.home="${{ steps.setup_java_17.outputs.path }}" \
             clean assembleDebug
 
       - name: Upload DEBUG APK artifact
