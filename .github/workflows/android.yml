@@ -46,15 +46,22 @@ jobs:
       - name: Ensure Android platform exists
         run: npx cap add android || echo "Android already added"
 
-      - name: Sync Capacitor Android
-        run: npx cap sync android
-
-
-
-      - name: Clean Gradle caches
-        run: |
-          rm -rf ~/.gradle/caches || true
-          rm -rf ~/.gradle/wrapper || true
+            - name: Sync Capacitor Android
+              run: npx cap sync android
+      
+            - name: Debug Gradle Wrapper Properties and Clean Distribution
+              working-directory: android
+              run: |
+                echo "--- Contents of gradle/wrapper/gradle-wrapper.properties ---"
+                cat gradle/wrapper/gradle-wrapper.properties
+                echo "--- Forcing Gradle Wrapper re-download ---"
+                rm -rf ~/.gradle/wrapper/dists || true
+                ./gradlew --stop || true # Stop any running daemons
+      
+            - name: Clean Gradle caches
+              run: |
+                rm -rf ~/.gradle/caches || true
+                rm -rf ~/.gradle/wrapper || true
 
 
       - name: Verify Java and Gradle versions for debug
@@ -66,9 +73,7 @@ jobs:
           echo "Gradle version:"
           ./gradlew -version
 
-      - name: Run dependencyInsight for bcprov-jdk18on
-        working-directory: android
-        run: ./gradlew :app:dependencyInsight --dependency bcprov-jdk18on
+
 
       - name: Build Android DEBUG APK
         working-directory: android
