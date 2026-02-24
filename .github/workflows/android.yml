@@ -49,30 +49,22 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-      # Fix duplicate style blocks (safe)
-      - name: Fix duplicate AppTheme.NoActionBar in styles.xml
-        run: |
-          FILE="android/app/src/main/res/values/styles.xml"
-          if [ -f "$FILE" ]; then
-            COUNT=$(grep -c 'name="AppTheme.NoActionBar"' "$FILE" || true)
-            if [ "$COUNT" -gt 1 ]; then
-              awk '
-                BEGIN {seen=0; skip=0}
-                /<style name="AppTheme\.NoActionBar"/ { if (seen==1) skip=1; seen=1 }
-                skip==1 && /<\/style>/ {skip=0; next}
-                skip==1 {next}
-                {print}
-              ' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
-            fi
-          fi
 
-      # Patch legacy proguard default everywhere (capacitor + plugins)
-      - name: Patch legacy proguard-android.txt everywhere
+
+      - name: Clean Gradle caches
         run: |
-          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
-            "s/getDefaultProguardFile('proguard-android.txt')/getDefaultProguardFile('proguard-android-optimize.txt')/g"
-          find android node_modules/@capacitor -type f -name "*.gradle" -print0 | xargs -0 sed -i \
-            "s/getDefaultProguardFile(\"proguard-android.txt\")/getDefaultProguardFile(\"proguard-android-optimize.txt\")/g"
+          rm -rf ~/.gradle/caches || true
+          rm -rf ~/.gradle/wrapper || true
+
+
+      - name: Verify Java and Gradle versions for debug
+        working-directory: android
+        run: |
+          echo "Java version:"
+          java -version
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "Gradle version:"
+          ./gradlew -version
 
       - name: Build Android DEBUG APK
         working-directory: android
