@@ -22,7 +22,8 @@ import {
 } from 'recharts';
 import { cn } from '@/lib/utils';
 import { listExpenses } from '@/lib/expenses';
-import { listLocalServiceBookings, type LocalServiceBooking } from '@/lib/serviceBookings';
+import { listLocalServiceBookings, pullRecentServiceBookings, type LocalServiceBooking } from '@/lib/serviceBookings';
+import { ensureSupabaseSession } from '@/lib/supabaseSession';
 
 const OFFLINE_QUEUE_KEY = 'themasters_offline_queue';
 const ORDERS_CACHE_KEY = 'themasters_orders_cache_v1';
@@ -117,7 +118,24 @@ function inRange(iso: string, start: Date, end: Date) {
   }
 }
 
+function isMissingColumnError(err: unknown) {
+  const code = String((err as any)?.code || '');
+  const msg = String((err as any)?.message || '').toLowerCase();
+  return code === '42703' || (msg.includes('column') && msg.includes('does not exist'));
+}
+
+function getReadableErrorMessage(err: unknown) {
+  const msg = String((err as any)?.message || err || '').trim();
+  if (!msg) return 'Unknown error';
+  return msg;
+}
+
 async function fetchOrdersRemote(startISO: string, endISO: string): Promise<OrderRow[]> {
+  const sessionRes = await ensureSupabaseSession();
+  if (!sessionRes.ok) {
+    throw new Error(sessionRes.error || 'No active session');
+  }
+
   const withProfiles = await supabase
     .from('orders')
     .select(
@@ -191,8 +209,38 @@ async function fetchOrdersRemote(startISO: string, endISO: string): Promise<Orde
       .lte('created_at', endISO)
       .order('created_at', { ascending: true });
 
-    if (withoutServiceNote.error) throw withoutServiceNote.error;
-    rows = (withoutServiceNote.data as any[]) || [];
+    if (withoutServiceNote.error) {
+      if (!isMissingColumnError(withoutServiceNote.error)) throw withoutServiceNote.error;
+
+      const legacyOrders = await supabase
+        .from('orders')
+        .select(
+          `
+            id,
+            total_amount,
+            payment_method,
+            created_at,
+            cashier_id,
+            order_items (
+              quantity,
+              price_at_sale,
+              product_name
+            )
+          `
+        )
+        .gte('created_at', startISO)
+        .lte('created_at', endISO)
+        .order('created_at', { ascending: true });
+
+      if (legacyOrders.error) throw legacyOrders.error;
+      rows = ((legacyOrders.data as any[]) || []).map((o: any) => ({
+        ...o,
+        sale_type: null,
+        booking_id: null,
+      }));
+    } else {
+      rows = (withoutServiceNote.data as any[]) || [];
+    }
   } else {
     rows = (withServiceNote.data as any[]) || [];
   }
@@ -230,6 +278,8 @@ export const ReportsPage = () => {
     from: new Date(),
     to: new Date(),
   });
+  const [ordersWarning, setOrdersWarning] = useState<string | null>(null);
+  const [bookingsWarning, setBookingsWarning] = useState<string | null>(null);
 
   useEffect(() => {
     const onOn = () => setIsOnline(true);
@@ -266,10 +316,12 @@ export const ReportsPage = () => {
 
       try {
         const remote = await fetchOrdersRemote(monthRange.from, monthRange.to);
+        setOrdersWarning(null);
         upsertOrdersCache(remote);
         return [...remote, ...queued];
       } catch (e) {
         console.warn('[reports] month fetch failed, using cache fallback:', e);
+        setOrdersWarning(`Online sales sync unavailable: ${getReadableErrorMessage(e)}. Showing cached/offline sales.`);
         return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       }
     },
@@ -304,8 +356,17 @@ export const ReportsPage = () => {
   }, [monthExpenses, monthRevenue]);
 
   const { data: monthBookings = [] } = useQuery({
-    queryKey: ['p5MonthBookings', monthRange.from, monthRange.to],
+    queryKey: ['p5MonthBookings', monthRange.from, monthRange.to, isOnline],
     queryFn: async () => {
+      if (isOnline) {
+        try {
+          await pullRecentServiceBookings(90);
+          setBookingsWarning(null);
+        } catch (e) {
+          console.warn('[reports] service bookings pull failed, using local bookings:', e);
+          setBookingsWarning(`Service bookings sync unavailable: ${getReadableErrorMessage(e)}. Showing local bookings only.`);
+        }
+      }
       const all = await listLocalServiceBookings();
       return all || [];
     },
@@ -377,10 +438,12 @@ export const ReportsPage = () => {
 
       try {
         const remote = await fetchOrdersRemote(start.toISOString(), end.toISOString());
+        setOrdersWarning(null);
         upsertOrdersCache(remote);
         return [...remote, ...queued];
       } catch (e) {
         console.warn('[reports] sales fetch failed, using cache fallback:', e);
+        setOrdersWarning(`Online sales sync unavailable: ${getReadableErrorMessage(e)}. Showing cached/offline sales.`);
         return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
       }
     },
@@ -541,6 +604,13 @@ export const ReportsPage = () => {
           </Button>
         </div>
       </div>
+
+      {(ordersWarning || bookingsWarning) && (
+        <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          {ordersWarning && <div>{ordersWarning}</div>}
+          {bookingsWarning && <div>{bookingsWarning}</div>}
+        </div>
+      )}
 
       {/* P4: This month widget */}
       <Card className="premium-surface border-white/10 dark:border-white/5">
