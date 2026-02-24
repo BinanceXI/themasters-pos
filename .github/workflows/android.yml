@@ -66,6 +66,10 @@ jobs:
           echo "Gradle version:"
           ./gradlew -version
 
+      - name: Run dependencyInsight for bcprov-jdk18on
+        working-directory: android
+        run: ./gradlew :app:dependencyInsight --dependency bcprov-jdk18on
+
       - name: Build Android DEBUG APK
         working-directory: android
         shell: bash
