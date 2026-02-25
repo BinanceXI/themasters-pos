@@ -637,33 +637,37 @@ export const ReportsPage = () => {
 
 	      {/* KPI STATS */}
 	      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-	        <StatCard 
-	          title="Total Revenue" 
-	          value={`$${stats.totalRevenue.toLocaleString()}`} 
+        <StatCard 
+          title="Total Revenue" 
+          value={`$${stats.totalRevenue.toLocaleString()}`} 
           icon={DollarSign} 
           trend="+12%" 
-          color="text-primary bg-primary/10" 
+          color="text-primary bg-primary/10"
+          isMobile={isMobile}
         />
         <StatCard 
           title="Transactions" 
           value={stats.transactionCount.toString()} 
           icon={ShoppingCart} 
           trend="+5%" 
-          color="text-blue-500 bg-blue-500/10" 
+          color="text-blue-500 bg-blue-500/10"
+          isMobile={isMobile}
         />
         <StatCard 
           title="Avg. Ticket" 
           value={`$${stats.avgTicket.toFixed(2)}`} 
           icon={TrendingUp} 
           trend="-2%" 
-          color="text-indigo-500 bg-indigo-500/10" 
+          color="text-indigo-500 bg-indigo-500/10"
+          isMobile={isMobile}
         />
         <StatCard 
           title="Active Staff" 
           value={stats.topCashiers.length.toString()} 
           icon={Users} 
           trend="Stable" 
-          color="text-sky-500 bg-sky-500/10" 
+          color="text-sky-500 bg-sky-500/10"
+          isMobile={isMobile}
         />
       </div>
 
@@ -797,8 +801,7 @@ export const ReportsPage = () => {
   );
 };
 
-const StatCard = ({ title, value, icon: Icon, trend, color }: any) => {
-  const isMobile = useIsMobile();
+const StatCard = ({ title, value, icon: Icon, trend, color, isMobile }: any) => {
   return (
     <motion.div 
       initial={{ opacity: 0, y: 10 }} 
