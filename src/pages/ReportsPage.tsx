@@ -21,6 +21,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar 
 } from 'recharts';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from "@/hooks/use-mobile";
 import { listExpenses } from '@/lib/expenses';
 import { listLocalServiceBookings, pullRecentServiceBookings, type LocalServiceBooking } from '@/lib/serviceBookings';
 import { ensureSupabaseSession } from '@/lib/supabaseSession';
@@ -614,10 +615,10 @@ export const ReportsPage = () => {
 
       {/* P4: This month widget */}
       <Card className="premium-surface border-white/10 dark:border-white/5">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">This month (Revenue vs Expenses)</CardTitle>
+        <CardHeader className={cn("pb-3", useIsMobile() ? "p-4" : "")}>
+          <CardTitle className={cn("font-semibold", useIsMobile() ? "text-sm" : "text-base")}>This month (Revenue vs Expenses)</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className={cn(useIsMobile() ? "p-4 pt-0" : "")}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="rounded-xl border bg-card p-3">
               <div className="text-xs text-muted-foreground">Revenue</div>
@@ -639,7 +640,8 @@ export const ReportsPage = () => {
             </div>
           </div>
         </CardContent>
-	      </Card>
+      </Card>
+
 
 	      {/* P5: This month service breakdown */}
 	      <Card className="premium-surface border-white/10 dark:border-white/5">
@@ -793,29 +795,30 @@ export const ReportsPage = () => {
         
         {/* Payment Methods */}
         <Card className="premium-surface border-white/10 dark:border-white/5">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Payment Methods</CardTitle>
+          <CardHeader className={cn(useIsMobile() ? "p-4" : "")}>
+            <CardTitle className={cn("font-semibold", useIsMobile() ? "text-sm" : "text-base")}>Payment Methods</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-primary/10 border border-primary/20 text-center">
-                <Banknote className="w-6 h-6 mx-auto mb-2 text-primary" />
-                <p className="text-xs text-muted-foreground uppercase">Cash</p>
-                <p className="text-lg font-bold text-primary">${stats.paymentMethods.cash.toFixed(0)}</p>
+          <CardContent className={cn(useIsMobile() ? "p-4 pt-0" : "")}>
+            <div className="grid grid-cols-3 gap-2 md:gap-4">
+              <div className={cn("rounded-xl bg-primary/10 border border-primary/20 text-center", useIsMobile() ? "p-2" : "p-4")}>
+                <Banknote className={cn("mx-auto mb-1 text-primary", useIsMobile() ? "w-4 h-4" : "w-6 h-6")} />
+                <p className="text-[9px] text-muted-foreground uppercase">Cash</p>
+                <p className={cn("font-bold text-primary", useIsMobile() ? "text-sm" : "text-lg")}>${stats.paymentMethods.cash.toFixed(0)}</p>
               </div>
-              <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-center">
-                <CreditCard className="w-6 h-6 mx-auto mb-2 text-blue-500" />
-                <p className="text-xs text-muted-foreground uppercase">Card</p>
-                <p className="text-lg font-bold text-blue-500">${stats.paymentMethods.card.toFixed(0)}</p>
+              <div className={cn("rounded-xl bg-blue-500/10 border border-blue-500/20 text-center", useIsMobile() ? "p-2" : "p-4")}>
+                <CreditCard className={cn("mx-auto mb-1 text-blue-500", useIsMobile() ? "w-4 h-4" : "w-6 h-6")} />
+                <p className="text-[9px] text-muted-foreground uppercase">Card</p>
+                <p className={cn("font-bold text-blue-500", useIsMobile() ? "text-sm" : "text-lg")}>${stats.paymentMethods.card.toFixed(0)}</p>
               </div>
-              <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-center">
-                <Smartphone className="w-6 h-6 mx-auto mb-2 text-indigo-500" />
-                <p className="text-xs text-muted-foreground uppercase">EcoCash</p>
-                <p className="text-lg font-bold text-indigo-500">${stats.paymentMethods.ecocash.toFixed(0)}</p>
+              <div className={cn("rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-center", useIsMobile() ? "p-2" : "p-4")}>
+                <Smartphone className={cn("mx-auto mb-1 text-indigo-500", useIsMobile() ? "w-4 h-4" : "w-6 h-6")} />
+                <p className="text-[9px] text-muted-foreground uppercase">EcoCash</p>
+                <p className={cn("font-bold text-indigo-500", useIsMobile() ? "text-sm" : "text-lg")}>${stats.paymentMethods.ecocash.toFixed(0)}</p>
               </div>
             </div>
           </CardContent>
         </Card>
+
 
         {/* Top Selling Items */}
         <Card className="premium-surface border-white/10 dark:border-white/5">
@@ -843,43 +846,51 @@ export const ReportsPage = () => {
   );
 };
 
-const StatCard = ({ title, value, icon: Icon, trend, color }: any) => (
-  <motion.div 
-    initial={{ opacity: 0, y: 10 }} 
-    animate={{ opacity: 1, y: 0 }} 
-    className="bg-card border border-border/50 rounded-xl p-5 shadow-sm hover:shadow-md transition-all relative overflow-hidden"
-  >
-    <div className="flex justify-between items-start relative z-10">
-      <div>
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{title}</p>
-        <h3 className="text-2xl font-bold mt-2 tracking-tight">{value}</h3>
-        {trend && (
-          <div className="flex items-center gap-1 mt-1">
-            {trend.includes('+') ? (
-              <ArrowUpRight className="w-3 h-3 text-primary" />
-            ) : trend.includes('-') ? (
-              <ArrowDownRight className="w-3 h-3 text-muted-foreground" />
-            ) : (
-              <div className="w-3 h-3 rounded-full bg-primary/30" />
-            )}
-            <span
-              className={cn(
-                "text-xs font-bold",
-                trend.includes('+')
-                  ? "text-primary"
-                  : trend.includes('-')
-                    ? "text-muted-foreground"
-                    : "text-primary/80"
+const StatCard = ({ title, value, icon: Icon, trend, color }: any) => {
+  const isMobile = useIsMobile();
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 10 }} 
+      animate={{ opacity: 1, y: 0 }} 
+      className={cn(
+        "bg-card border border-border/50 rounded-xl shadow-sm hover:shadow-md transition-all relative overflow-hidden",
+        isMobile ? "p-3" : "p-5"
+      )}
+    >
+      <div className="flex justify-between items-start relative z-10">
+        <div>
+          <p className={cn("font-medium text-muted-foreground uppercase tracking-wide", isMobile ? "text-[9px]" : "text-xs")}>{title}</p>
+          <h3 className={cn("font-bold mt-1 tracking-tight", isMobile ? "text-lg" : "text-2xl")}>{value}</h3>
+          {trend && (
+            <div className="flex items-center gap-1 mt-0.5">
+              {trend.includes('+') ? (
+                <ArrowUpRight className="w-3 h-3 text-primary" />
+              ) : trend.includes('-') ? (
+                <ArrowDownRight className="w-3 h-3 text-muted-foreground" />
+              ) : (
+                <div className="w-3 h-3 rounded-full bg-primary/30" />
               )}
-            >
-              {trend}
-            </span>
-          </div>
-        )}
+              <span
+                className={cn(
+                  "font-bold",
+                  isMobile ? "text-[10px]" : "text-xs",
+                  trend.includes('+')
+                    ? "text-primary"
+                    : trend.includes('-')
+                      ? "text-muted-foreground"
+                      : "text-primary/80"
+                )}
+              >
+                {trend}
+              </span>
+            </div>
+          )}
+        </div>
+        <div className={cn("rounded-lg", color, isMobile ? "p-1.5" : "p-2.5")}>
+          <Icon className={isMobile ? "w-4 h-4" : "w-5 h-5"} />
+        </div>
       </div>
-      <div className={cn("p-2.5 rounded-xl", color)}>
-        <Icon className="w-5 h-5" />
-      </div>
-    </div>
-  </motion.div>
-);
+    </motion.div>
+  );
+};
+

@@ -38,6 +38,7 @@ import { tryPrintThermalQueue } from "@/lib/thermalPrint";
 import { createPortal } from "react-dom";
 import { ServiceBookingsDialog } from "@/components/services/ServiceBookingsDialog";
 import { pullRecentServiceBookings, pushUnsyncedServiceBookings } from "@/lib/serviceBookings";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 
 type FocusArea = "search" | "customer" | "products" | "cart";
@@ -801,50 +802,61 @@ const [showMobileCart, setShowMobileCart] = useState(false);
       </AnimatePresence>
 
       {/* LEFT COLUMN */}
-<div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50">
-        <div className="p-3 premium-surface border-b border-white/10 dark:border-white/5 flex justify-between items-center gap-3 shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] z-10">
-          <div className="text-xs font-mono bg-muted px-2 py-1 rounded flex items-center gap-2">
-            <span
-              className={cn(
-                "w-2 h-2 rounded-full",
-                syncStatus === "online" && "bg-green-500 animate-pulse",
-                syncStatus === "offline" && "bg-amber-500",
-                syncStatus === "syncing" && "bg-blue-500 animate-pulse",
-                syncStatus === "error" && "bg-red-500"
+      <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950/50">
+        <div className={cn(
+          "p-3 premium-surface border-b border-white/10 dark:border-white/5 flex justify-between items-center gap-3 shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] z-10",
+          useIsMobile() ? "py-2 px-3" : "p-3"
+        )}>
+          {!useIsMobile() && (
+            <div className="text-xs font-mono bg-muted px-2 py-1 rounded flex items-center gap-2">
+              <span
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  syncStatus === "online" && "bg-green-500 animate-pulse",
+                  syncStatus === "offline" && "bg-amber-500",
+                  syncStatus === "syncing" && "bg-blue-500 animate-pulse",
+                  syncStatus === "error" && "bg-red-500"
+                )}
+              />
+              {formatDate("datetime")}
+              {syncStatus === "offline" && (
+                <span className="ml-2 inline-flex items-center gap-1 text-amber-500">
+                  <CloudOff className="w-3 h-3" /> Offline
+                </span>
               )}
-            />
-            {formatDate("datetime")}
-            {syncStatus === "offline" && (
-              <span className="ml-2 inline-flex items-center gap-1 text-amber-500">
-                <CloudOff className="w-3 h-3" /> Offline
-              </span>
-            )}
-          </div>
+            </div>
+          )}
 
-          <div className="flex bg-muted p-1 rounded-lg">
+          <div className={cn("flex bg-muted p-1 rounded-lg", useIsMobile() ? "h-9" : "")}>
             <Button
               size="sm"
               variant="ghost"
               onClick={() => setPosModeSafe("retail")}
-              className={cn("h-7 text-xs rounded-md", posMode === "retail" && "bg-background shadow-sm text-foreground")}
+              className={cn(
+                "h-full text-xs rounded-md px-4",
+                posMode === "retail" && "bg-background shadow-sm text-foreground font-bold"
+              )}
             >
-              <Box className="w-3 h-3 mr-1" /> Retail
+              <Box className="w-3.5 h-3.5 mr-1.5" /> Retail
             </Button>
             <Button
               size="sm"
               variant="ghost"
               onClick={() => setPosModeSafe("service")}
-              className={cn("h-7 text-xs rounded-md", posMode === "service" && "bg-background shadow-sm text-foreground")}
+              className={cn(
+                "h-full text-xs rounded-md px-4",
+                posMode === "service" && "bg-background shadow-sm text-foreground font-bold"
+              )}
             >
-              <Zap className="w-3 h-3 mr-1" /> Service
+              <Zap className="w-3.5 h-3.5 mr-1.5" /> Service
             </Button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 md:gap-2">
             <Button
               size="sm"
               variant="outline"
-              className="h-8 text-xs gap-1"
+              className={cn("h-8 text-xs gap-1", useIsMobile() ? "px-2" : "")}
               onClick={() => setShowDiscountDialog(true)}
               title="Discount code"
             >
@@ -853,62 +865,66 @@ const [showMobileCart, setShowMobileCart] = useState(false);
             </Button>
 
             <Button
-  size="icon"
-  variant="outline"
-  className="h-8 w-8"
-  onClick={async () => {
-    const ok = await ensureCameraPermission();
-    if (ok) setShowScanner(true);
-  }}
->
+              size="icon"
+              variant="outline"
+              className="h-8 w-8"
+              onClick={async () => {
+                const ok = await ensureCameraPermission();
+                if (ok) setShowScanner(true);
+              }}
+            >
               <ScanLine className="w-4 h-4" />
             </Button>
           </div>
         </div>
 
-        <div className="p-3 space-y-3">
+
+        <div className={cn("p-3 space-y-3", useIsMobile() && "p-2 gap-2")}>
           <div className="relative group">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
             <Input
               ref={searchInputRef}
-              placeholder="Search Item, SKU, or Scan (F2)..."
+              placeholder={useIsMobile() ? "Search products..." : "Search Item, SKU, or Scan (F2)..."}
               className="pl-9 h-10 font-mono text-sm bg-black/5 dark:bg-white/5 shadow-sm border border-white/10 dark:border-white/5 backdrop-blur-md"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setFocusArea("search")}
             />
-            <div className="absolute right-2 top-2.5 flex gap-1">
-              <kbd className="hidden sm:inline-block pointer-events-none h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
-                F2
-              </kbd>
-            </div>
+            {!useIsMobile() && (
+              <div className="absolute right-2 top-2.5 flex gap-1">
+                <kbd className="hidden sm:inline-block pointer-events-none h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
+                  F2
+                </kbd>
+              </div>
+            )}
           </div>
 
           <div className="w-full overflow-x-auto no-scrollbar">
-  <div className="flex gap-2 pb-1 min-w-max touch-pan-x">
-    <Button
-      size="sm"
-      variant={selectedCategory === null ? "default" : "secondary"}
-      onClick={() => setSelectedCategory(null)}
-      className="h-8 px-4 text-xs rounded-full shrink-0"
-    >
-      All Items
-    </Button>
+            <div className={cn("flex gap-2 pb-1 min-w-max touch-pan-x", useIsMobile() && "gap-1.5")}>
+              <Button
+                size="sm"
+                variant={selectedCategory === null ? "default" : "secondary"}
+                onClick={() => setSelectedCategory(null)}
+                className={cn("h-8 px-4 text-xs rounded-full shrink-0", useIsMobile() && "h-7 px-3")}
+              >
+                All Items
+              </Button>
 
-    {categories.map((c) => (
-      <Button
-        key={c.id}
-        size="sm"
-        variant={selectedCategory === c.id ? "default" : "outline"}
-        onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}
-        className="h-8 px-4 text-xs rounded-full shrink-0 bg-card hover:bg-muted"
-      >
-        {c.name}
-      </Button>
-    ))}
-  </div>
-</div>
+              {categories.map((c) => (
+                <Button
+                  key={c.id}
+                  size="sm"
+                  variant={selectedCategory === c.id ? "default" : "outline"}
+                  onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}
+                  className={cn("h-8 px-4 text-xs rounded-full shrink-0 bg-card hover:bg-muted font-normal", useIsMobile() && "h-7 px-3")}
+                >
+                  {c.name}
+                </Button>
+              ))}
+            </div>
+          </div>
         </div>
+
 
         <div className="flex-1 p-3 overflow-y-auto min-h-0 max-h-[calc(100dvh-160px)] pb-28">
           {productsLoading ? (
@@ -1400,14 +1416,34 @@ const CartItemRow = ({
       </div>
 
       <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
-        <Button type="button" size="icon" variant="ghost" className="h-7 w-7 hover:bg-background shadow-sm" onClick={onDec}>
-          <Minus className="w-3 h-3" />
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className={cn(
+            "h-7 w-7 hover:bg-background shadow-sm",
+            useIsMobile() && "h-10 w-10"
+          )}
+          onClick={onDec}
+        >
+          <Minus className={cn("w-3 h-3", useIsMobile() && "w-4 h-4")} />
         </Button>
 
-        <span className="text-xs font-bold w-6 text-center font-mono">{Number(it.quantity ?? 0)}</span>
+        <span className={cn("text-xs font-bold w-6 text-center font-mono", useIsMobile() && "w-8 text-sm")}>
+          {Number(it.quantity ?? 0)}
+        </span>
 
-        <Button type="button" size="icon" variant="ghost" className="h-7 w-7 hover:bg-background shadow-sm" onClick={onInc}>
-          <Plus className="w-3 h-3" />
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className={cn(
+            "h-7 w-7 hover:bg-background shadow-sm",
+            useIsMobile() && "h-10 w-10"
+          )}
+          onClick={onInc}
+        >
+          <Plus className={cn("w-3 h-3", useIsMobile() && "w-4 h-4")} />
         </Button>
       </div>
 
@@ -1415,10 +1451,13 @@ const CartItemRow = ({
         type="button"
         size="icon"
         variant="ghost"
-        className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-1"
+        className={cn(
+          "h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 ml-1",
+          useIsMobile() && "h-10 w-10"
+        )}
         onClick={onRemove}
       >
-        <Trash2 className="w-3 h-3" />
+        <Trash2 className={cn("w-3 h-3", useIsMobile() && "w-4 h-4")} />
       </Button>
     </motion.div>
   );

@@ -52,6 +52,7 @@ import { toast } from "sonner";
 import { usePOS } from "@/contexts/POSContext";
 import { cn } from "@/lib/utils";
 import { Product } from "@/types/pos";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { BarcodeScanner } from "@/components/pos/BarcodeScanner";
 import {
   enqueueInventoryMutation,
@@ -709,185 +710,215 @@ export const InventoryPage = () => {
 </div>
       </div>
 
-      {/* Table */}
-      <div className="premium-surface border-white/10 dark:border-white/5 rounded-xl shadow-sm overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[60px]">Img</TableHead>
-              <TableHead>Product Name</TableHead>
-              <TableHead>Codes</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead className="text-right">Cost</TableHead>
-              <TableHead className="text-right">Price</TableHead>
-              <TableHead className="text-right">Profit</TableHead>
-              <TableHead className="text-right">Stock</TableHead>
-              <TableHead className="w-[50px]"></TableHead>
-            </TableRow>
-          </TableHeader>
+      {/* Table (Desktop) / Cards (Mobile) */}
+      {useIsMobile() ? (
+        <div className="space-y-3 pb-20">
+          {filteredProducts.map((product: any) => (
+            <InventoryMobileCard
+              key={product.id}
+              product={product}
+              isAdmin={isAdmin}
+              onEdit={() => openEditDialog(product)}
+              onArchive={() => {
+                const ok = confirm("Archive this product?");
+                if (ok) archiveMutation.mutate(product.id);
+              }}
+              onAdjustStock={() => {
+                const raw = prompt("New stock quantity:", String(product.stock_quantity || 0));
+                if (raw === null) return;
+                const parsed = Number(raw);
+                if (!Number.isFinite(parsed) || parsed < 0) return toast.error("Invalid number");
+                adjustStockMutation.mutate({ id: product.id, newStock: Math.floor(parsed) });
+              }}
+            />
+          ))}
+          {filteredProducts.length === 0 && (
+            <div className="text-center py-10 text-muted-foreground">
+              No products found matching your filters.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="premium-surface border-white/10 dark:border-white/5 rounded-xl shadow-sm overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[60px]">Img</TableHead>
+                <TableHead>Product Name</TableHead>
+                <TableHead>Codes</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
+                <TableHead className="text-right">Price</TableHead>
+                <TableHead className="text-right">Profit</TableHead>
+                <TableHead className="text-right">Stock</TableHead>
+                <TableHead className="w-[50px]"></TableHead>
+              </TableRow>
+            </TableHeader>
 
-          <TableBody>
-            {filteredProducts.map((product: any) => {
-              const profit = (product.price || 0) - (product.cost_price || 0);
-              const m =
-                (product.price || 0) > 0 ? (profit / (product.price || 1)) * 100 : 0;
+            <TableBody>
+              {filteredProducts.map((product: any) => {
+                const profit = (product.price || 0) - (product.cost_price || 0);
+                const m =
+                  (product.price || 0) > 0 ? (profit / (product.price || 1)) * 100 : 0;
 
-              const low =
-                product.type === "good" &&
-                (product.stock_quantity || 0) <= ((product as any).lowStockThreshold || 5);
+                const low =
+                  product.type === "good" &&
+                  (product.stock_quantity || 0) <= ((product as any).lowStockThreshold || 5);
 
-              const out =
-                product.type === "good" && (product.stock_quantity || 0) === 0;
+                const out =
+                  product.type === "good" && (product.stock_quantity || 0) === 0;
 
-              return (
-                <TableRow key={product.id} className="group">
-                  <TableCell>
-                    <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden">
-                      {(product as any).image ? (
-                        <img
-                          src={(product as any).image}
-                          alt={product.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <ImageIcon className="w-5 h-5 text-muted-foreground opacity-50" />
-                      )}
-                    </div>
-                  </TableCell>
+                return (
+                  <TableRow key={product.id} className="group">
+                    <TableCell>
+                      <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden">
+                        {(product as any).image ? (
+                          <img
+                            src={(product as any).image}
+                            alt={product.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <ImageIcon className="w-5 h-5 text-muted-foreground opacity-50" />
+                        )}
+                      </div>
+                    </TableCell>
 
-                  <TableCell>
-                    <div className="font-medium flex items-center gap-2">
-                      {product.name}
-                      {!!product.is_archived && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Archived
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted-foreground">{product.category}</div>
-                  </TableCell>
+                    <TableCell>
+                      <div className="font-medium flex items-center gap-2">
+                        {product.name}
+                        {!!product.is_archived && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Archived
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{product.category}</div>
+                    </TableCell>
 
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      {product.sku && (
-                        <Badge variant="outline" className="w-fit text-[10px] font-mono">
-                          {product.sku}
-                        </Badge>
-                      )}
-                      {(product as any).shortcutCode && (
-                        <Badge className="w-fit text-[10px] font-mono bg-blue-500/10 text-blue-500 border-blue-200">
-                          #{(product as any).shortcutCode}
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1">
+                        {product.sku && (
+                          <Badge variant="outline" className="w-fit text-[10px] font-mono">
+                            {product.sku}
+                          </Badge>
+                        )}
+                        {(product as any).shortcutCode && (
+                          <Badge className="w-fit text-[10px] font-mono bg-blue-500/10 text-blue-500 border-blue-200">
+                            #{(product as any).shortcutCode}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
 
-                  <TableCell>
-                    <span className="capitalize text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
-                      {product.type}
-                    </span>
-                  </TableCell>
+                    <TableCell>
+                      <span className="capitalize text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+                        {product.type}
+                      </span>
+                    </TableCell>
 
-                  <TableCell className="text-right text-muted-foreground">
-                    ${(product.cost_price || 0).toFixed(2)}
-                  </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      ${(product.cost_price || 0).toFixed(2)}
+                    </TableCell>
 
-                  <TableCell className="text-right font-bold text-base">
-                    ${(product.price || 0).toFixed(2)}
-                  </TableCell>
+                    <TableCell className="text-right font-bold text-base">
+                      ${(product.price || 0).toFixed(2)}
+                    </TableCell>
 
-                  <TableCell className="text-right">
-                    <div
-                      className={cn(
-                        "text-xs font-medium",
-                        profit >= 0 ? "text-green-600" : "text-red-500"
-                      )}
-                    >
-                      {profit >= 0 ? "+" : ""}${profit.toFixed(2)}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground">{m.toFixed(0)}%</div>
-                  </TableCell>
-
-                  <TableCell className="text-right">
-                    {product.type === "service" ? (
-                      <span className="text-xs text-muted-foreground">∞</span>
-                    ) : (
-                      <span
+                    <TableCell className="text-right">
+                      <div
                         className={cn(
-                          "font-mono font-medium px-2 py-1 rounded",
-                          out
-                            ? "bg-red-500/10 text-red-500"
-                            : low
-                            ? "bg-amber-500/10 text-amber-500"
-                            : "bg-muted"
+                          "text-xs font-medium",
+                          profit >= 0 ? "text-green-600" : "text-red-500"
                         )}
                       >
-                        {product.stock_quantity || 0}
-                      </span>
-                    )}
-                  </TableCell>
+                        {profit >= 0 ? "+" : ""}${profit.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{m.toFixed(0)}%</div>
+                    </TableCell>
 
-                  <TableCell>
-                    {isAdmin && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
+                    <TableCell className="text-right">
+                      {product.type === "service" ? (
+                        <span className="text-xs text-muted-foreground">∞</span>
+                      ) : (
+                        <span
+                          className={cn(
+                            "font-mono font-medium px-2 py-1 rounded",
+                            out
+                              ? "bg-red-500/10 text-red-500"
+                              : low
+                              ? "bg-amber-500/10 text-amber-500"
+                              : "bg-muted"
+                          )}
+                        >
+                          {product.stock_quantity || 0}
+                        </span>
+                      )}
+                    </TableCell>
 
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openEditDialog(product)}>
-                            <Edit className="w-4 h-4 mr-2" /> Edit Details
-                          </DropdownMenuItem>
+                    <TableCell>
+                      {isAdmin && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
 
-                          {product.type === "good" && (
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openEditDialog(product)}>
+                              <Edit className="w-4 h-4 mr-2" /> Edit Details
+                            </DropdownMenuItem>
+
+                            {product.type === "good" && (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  const raw = prompt(
+                                    "Enter new stock quantity:",
+                                    String(product.stock_quantity || 0)
+                                  );
+                                  if (raw === null) return;
+                                  const parsed = Number(raw);
+                                  if (!Number.isFinite(parsed) || parsed < 0)
+                                    return toast.error("Invalid stock number");
+                                  adjustStockMutation.mutate({
+                                    id: product.id,
+                                    newStock: Math.floor(parsed),
+                                  });
+                                }}
+                              >
+                                <ArrowUpDown className="w-4 h-4 mr-2" /> Quick Stock Adjustment
+                              </DropdownMenuItem>
+                            )}
+
                             <DropdownMenuItem
+                              className="text-destructive"
                               onClick={() => {
-                                const raw = prompt(
-                                  "Enter new stock quantity:",
-                                  String(product.stock_quantity || 0)
+                                const ok = confirm(
+                                  "Archive this product? (Recommended)\n\nIt will disappear from inventory + POS lists, but old sales remain safe."
                                 );
-                                if (raw === null) return;
-                                const parsed = Number(raw);
-                                if (!Number.isFinite(parsed) || parsed < 0)
-                                  return toast.error("Invalid stock number");
-                                adjustStockMutation.mutate({
-                                  id: product.id,
-                                  newStock: Math.floor(parsed),
-                                });
+                                if (!ok) return;
+                                archiveMutation.mutate(product.id);
                               }}
                             >
-                              <ArrowUpDown className="w-4 h-4 mr-2" /> Quick Stock Adjustment
+                              <Trash2 className="w-4 h-4 mr-2" /> Archive Product
                             </DropdownMenuItem>
-                          )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => {
-                              const ok = confirm(
-                                "Archive this product? (Recommended)\n\nIt will disappear from inventory + POS lists, but old sales remain safe."
-                              );
-                              if (!ok) return;
-                              archiveMutation.mutate(product.id);
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" /> Archive Product
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
 
       {/* Add/Edit Dialog */}
       <Dialog open={showProductDialog} onOpenChange={setShowProductDialog}>
@@ -1221,3 +1252,90 @@ const StatBox = ({ label, value, color, icon: Icon, onClick, active }: any) => (
     </div>
   </motion.div>
 );
+
+const InventoryMobileCard = ({ product, isAdmin, onEdit, onArchive, onAdjustStock }: any) => {
+  const profit = (product.price || 0) - (product.cost_price || 0);
+  const m = (product.price || 0) > 0 ? (profit / (product.price || 1)) * 100 : 0;
+  const isLow = product.type === "good" && (product.stock_quantity || 0) <= (product.lowStockThreshold || 5);
+  const isOut = product.type === "good" && (product.stock_quantity || 0) === 0;
+
+  return (
+    <div className="premium-surface border border-white/10 dark:border-white/5 rounded-2xl p-4 shadow-sm space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="w-14 h-14 rounded-xl bg-muted shrink-0 overflow-hidden flex items-center justify-center">
+          {product.image ? (
+            <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+          ) : (
+            <ImageIcon className="w-6 h-6 text-muted-foreground opacity-30" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-bold truncate text-base">{product.name}</div>
+          <div className="text-xs text-muted-foreground">{product.category}</div>
+          <div className="flex gap-1 mt-1">
+            {product.sku && (
+              <Badge variant="outline" className="text-[9px] font-mono py-0 h-4">
+                {product.sku}
+              </Badge>
+            )}
+            {product.shortcutCode && (
+              <Badge className="text-[9px] font-mono py-0 h-4 bg-blue-500/10 text-blue-500 border-blue-200">
+                #{product.shortcutCode}
+              </Badge>
+            )}
+          </div>
+        </div>
+        {isAdmin && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <MoreVertical className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={onEdit}><Edit className="w-4 h-4 mr-2" /> Edit Details</DropdownMenuItem>
+              {product.type === "good" && (
+                <DropdownMenuItem onClick={onAdjustStock}><ArrowUpDown className="w-4 h-4 mr-2" /> Adjust Stock</DropdownMenuItem>
+              )}
+              <DropdownMenuItem onClick={onArchive} className="text-destructive"><Trash2 className="w-4 h-4 mr-2" /> Archive</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 pt-2 border-t border-white/5">
+        <div className="space-y-1">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Price & Profit</div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-lg font-bold">${(product.price || 0).toFixed(2)}</span>
+            <span className={cn("text-[11px] font-medium", profit >= 0 ? "text-green-500" : "text-red-500")}>
+              {profit >= 0 ? "+" : ""}${profit.toFixed(2)} ({m.toFixed(0)}%)
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-1 text-right">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Inventory</div>
+          {product.type === "service" ? (
+            <span className="text-sm font-medium text-muted-foreground italic">Service (∞)</span>
+          ) : (
+            <div className="flex flex-col items-end">
+              <span className={cn(
+                "text-lg font-mono font-bold px-2 rounded-lg",
+                isOut ? "text-red-500 bg-red-500/10" : isLow ? "text-amber-500 bg-amber-500/10" : "text-primary bg-primary/10"
+              )}>
+                {product.stock_quantity || 0}
+              </span>
+              {isOut ? (
+                <span className="text-[9px] text-red-500 font-bold uppercase mt-0.5">Out of Stock</span>
+              ) : isLow ? (
+                <span className="text-[9px] text-amber-500 font-bold uppercase mt-0.5">Low Stock</span>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
