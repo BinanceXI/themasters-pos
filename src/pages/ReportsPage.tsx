@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { 
@@ -25,6 +25,15 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { listExpenses } from '@/lib/expenses';
 import { listLocalServiceBookings, pullRecentServiceBookings, type LocalServiceBooking } from '@/lib/serviceBookings';
 import { ensureSupabaseSession } from '@/lib/supabaseSession';
+import { isLikelyAuthError } from '@/lib/supabaseSession';
+import {
+  calculateMonthExpenseTotals as coreCalculateMonthExpenseTotals,
+  calculateSalesStats as coreCalculateSalesStats,
+  mergeOrdersForMetrics as coreMergeOrdersForMetrics,
+  sumOrdersRevenue as coreSumOrdersRevenue,
+  type SalesRangeType,
+} from '@/core/reports/reportMetrics';
+import { REPORTS_OFFLINE_BANNER, requireAuthedSessionOrOfflineBanner } from '@/core/auth-gates/reportsSessionGate';
 
 const OFFLINE_QUEUE_KEY = 'themasters_offline_queue';
 const ORDERS_CACHE_KEY = 'themasters_orders_cache_v1';
@@ -281,6 +290,9 @@ export const ReportsPage = () => {
   });
   const [ordersWarning, setOrdersWarning] = useState<string | null>(null);
   const [bookingsWarning, setBookingsWarning] = useState<string | null>(null);
+  const updateOrdersWarning = useCallback((next: string | null) => {
+    setOrdersWarning((prev) => (prev === next ? prev : next));
+  }, []);
 
   useEffect(() => {
     const onOn = () => setIsOnline(true);
@@ -310,20 +322,24 @@ export const ReportsPage = () => {
 
       const queued = offlineQueueToOrders().filter((o) => inRange(o.created_at, start, end));
       const cached = readOrdersCache().filter((o) => inRange(o.created_at, start, end));
+      const fallbackRows = coreMergeOrdersForMetrics(cached, queued);
 
-      if (!isOnline) {
-        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      const gate = await requireAuthedSessionOrOfflineBanner({ isOnline });
+      if (gate.mode === 'offline') {
+        updateOrdersWarning(REPORTS_OFFLINE_BANNER);
+        return fallbackRows;
       }
 
       try {
         const remote = await fetchOrdersRemote(monthRange.from, monthRange.to);
-        setOrdersWarning(null);
+        updateOrdersWarning(null);
         upsertOrdersCache(remote);
-        return [...remote, ...queued];
+        return coreMergeOrdersForMetrics(remote, queued);
       } catch (e) {
         console.warn('[reports] month fetch failed, using cache fallback:', e);
-        setOrdersWarning(`Online sales sync unavailable: ${getReadableErrorMessage(e)}. Showing cached/offline sales.`);
-        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+        if (isLikelyAuthError(e) || !navigator.onLine) updateOrdersWarning(REPORTS_OFFLINE_BANNER);
+        else updateOrdersWarning(`Online sales sync unavailable: ${getReadableErrorMessage(e)}.`);
+        return fallbackRows;
       }
     },
     staleTime: 1000 * 60 * 5,
@@ -332,7 +348,7 @@ export const ReportsPage = () => {
   });
 
   const monthRevenue = useMemo(
-    () => (monthOrders || []).reduce((sum: number, o: any) => sum + Number(o.total_amount || 0), 0),
+    () => coreSumOrdersRevenue(monthOrders as any[]),
     [monthOrders]
   );
 
@@ -344,17 +360,10 @@ export const ReportsPage = () => {
     refetchOnReconnect: true,
   });
 
-  const monthExpenseTotals = useMemo(() => {
-    let expenses = 0;
-    let drawings = 0;
-    (monthExpenses || []).forEach((e: any) => {
-      const amt = Number(e.amount || 0);
-      if (e.expense_type === 'owner_draw' || e.expense_type === 'owner_drawing') drawings += amt;
-      else expenses += amt;
-    });
-    const net = monthRevenue - (expenses + drawings);
-    return { expenses, drawings, net };
-  }, [monthExpenses, monthRevenue]);
+  const monthExpenseTotals = useMemo(
+    () => coreCalculateMonthExpenseTotals(monthExpenses as any[], monthRevenue),
+    [monthExpenses, monthRevenue]
+  );
 
   const { data: monthBookings = [] } = useQuery({
     queryKey: ['p5MonthBookings', monthRange.from, monthRange.to, isOnline],
@@ -431,93 +440,34 @@ export const ReportsPage = () => {
 
       const queued = offlineQueueToOrders().filter((o) => inRange(o.created_at, start, end));
       const cached = readOrdersCache().filter((o) => inRange(o.created_at, start, end));
+      const fallbackRows = coreMergeOrdersForMetrics(cached, queued);
 
-      // Offline-first: render from cached + queued sales
-      if (!isOnline) {
-        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      const gate = await requireAuthedSessionOrOfflineBanner({ isOnline });
+      if (gate.mode === 'offline') {
+        updateOrdersWarning(REPORTS_OFFLINE_BANNER);
+        return fallbackRows;
       }
 
       try {
         const remote = await fetchOrdersRemote(start.toISOString(), end.toISOString());
-        setOrdersWarning(null);
+        updateOrdersWarning(null);
         upsertOrdersCache(remote);
-        return [...remote, ...queued];
+        return coreMergeOrdersForMetrics(remote, queued);
       } catch (e) {
         console.warn('[reports] sales fetch failed, using cache fallback:', e);
-        setOrdersWarning(`Online sales sync unavailable: ${getReadableErrorMessage(e)}. Showing cached/offline sales.`);
-        return [...cached, ...queued].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+        if (isLikelyAuthError(e) || !navigator.onLine) updateOrdersWarning(REPORTS_OFFLINE_BANNER);
+        else updateOrdersWarning(`Online sales sync unavailable: ${getReadableErrorMessage(e)}.`);
+        return fallbackRows;
       }
     },
     staleTime: 1000 * 60 * 5 // Cache for 5 mins
   });
 
   // --- 2. CALCULATE METRICS ---
-  const stats = useMemo(() => {
-    let totalRevenue = 0;
-    let transactionCount = 0;
-    const paymentMethods = { cash: 0, card: 0, ecocash: 0 };
-    const cashierPerformance: Record<string, number> = {};
-    const chartData: any[] = [];
-    const productSales: Record<string, number> = {};
-
-    // Grouping for Chart
-    const timeMap: Record<string, number> = {};
-
-    salesData.forEach((order: any) => {
-      const amount = Number(order.total_amount);
-      totalRevenue += amount;
-      transactionCount++;
-
-      // Payment Splits
-      const method = order.payment_method?.toLowerCase() || 'cash';
-      if (method.includes('card') || method.includes('swipe')) paymentMethods.card += amount;
-      else if (method.includes('eco') || method.includes('mobile')) paymentMethods.ecocash += amount;
-      else paymentMethods.cash += amount;
-
-      // Cashier Stats
-      const cashierName = order.profiles?.full_name || 'Unknown';
-      cashierPerformance[cashierName] = (cashierPerformance[cashierName] || 0) + amount;
-
-      // Product Stats
-      order.order_items?.forEach((item: any) => {
-        const pName = item.product_name || 'Unknown';
-        productSales[pName] = (productSales[pName] || 0) + item.quantity;
-      });
-
-      // Chart Data Grouping
-      const date = parseISO(order.created_at);
-      let key = format(date, 'HH:00'); // Default Hourly
-      if (rangeType === 'month' || rangeType === 'year' || rangeType === 'week') {
-        key = format(date, 'MMM dd'); // Daily for longer ranges
-      }
-      timeMap[key] = (timeMap[key] || 0) + amount;
-    });
-
-    // Format Chart Data
-    Object.keys(timeMap).forEach(key => {
-      chartData.push({ name: key, value: timeMap[key] });
-    });
-
-    const avgTicket = transactionCount > 0 ? totalRevenue / transactionCount : 0;
-    const topProducts = Object.entries(productSales)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
-      .map(([name, qty]) => ({ name, qty }));
-
-    const topCashiers = Object.entries(cashierPerformance)
-      .sort(([, a], [, b]) => b - a)
-      .map(([name, total]) => ({ name, total }));
-
-    return {
-      totalRevenue,
-      transactionCount,
-      avgTicket,
-      paymentMethods,
-      chartData,
-      topProducts,
-      topCashiers
-    };
-  }, [salesData, rangeType]);
+  const stats = useMemo(
+    () => coreCalculateSalesStats(salesData as any[], rangeType as SalesRangeType),
+    [salesData, rangeType]
+  );
 
   const handleExportPDF = () => {
     // Simple CSV Export logic for now (Robust PDF usually requires heavy libraries)
@@ -647,8 +597,8 @@ export const ReportsPage = () => {
 	      <Card className="premium-surface border-white/10 dark:border-white/5">
 	        <CardHeader className="pb-3">
 	          <CardTitle className="text-base font-semibold">This month (Goods vs Services)</CardTitle>
-	          {!isOnline && (
-	            <div className="text-xs text-muted-foreground">Offline: showing cached + queued sales</div>
+          {ordersWarning === REPORTS_OFFLINE_BANNER && (
+	            <div className="text-xs text-muted-foreground">{REPORTS_OFFLINE_BANNER}</div>
 	          )}
 	        </CardHeader>
 	        <CardContent>
@@ -893,4 +843,3 @@ const StatCard = ({ title, value, icon: Icon, trend, color }: any) => {
     </motion.div>
   );
 };
-

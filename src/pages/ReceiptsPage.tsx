@@ -42,6 +42,7 @@ import {
 } from "@/lib/thermalPrint";
 
 import { tryPrintThermalQueue } from "@/lib/thermalPrint";
+import type { ReceiptStoreSettings } from "@/core/receipts/receiptPrintModel";
 
 // --------------------
 // Offline queue helpers
@@ -159,8 +160,9 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-function toThermalPayload(data: PrintData) {
+function toThermalPayload(data: PrintData, settings?: ReceiptStoreSettings | null) {
   return {
+    receiptId: data.receiptId,
     receiptNumber: data.receiptNumber,
     timestamp: data.timestamp || new Date().toISOString(),
     cashierName: data.cashierName || "Staff",
@@ -178,6 +180,9 @@ function toThermalPayload(data: PrintData) {
     discount: num(data.discount),
     tax: num(data.tax),
     total: num(data.total),
+    activeDiscountName: data.activeDiscount?.name || null,
+    taxRatePct: data.taxRatePct ?? null,
+    settings: settings || null,
   };
 }
 
@@ -250,14 +255,14 @@ const [printerPort, setPrinterPort] = useState(
       // Let React commit #receipt-print-area before printer pipeline reads it.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await printReceiptSmart(toThermalPayload(data), overrides);
+      await printReceiptSmart(toThermalPayload(data, settings as any), overrides);
       toast.success("Print sent");
     } catch (e: any) {
       toast.error(e?.message || "Print failed");
     } finally {
       setTimeout(() => setIsPrinting(false), 700);
     }
-  }, []);
+  }, [settings]);
 
   const refreshBtDevices = useCallback(async () => {
     if (!isAndroid) return;
@@ -1284,6 +1289,8 @@ const testThermalPrint = async () => {
             paymentMethod={printData.paymentMethod}
             activeDiscount={printData.activeDiscount ?? null}
             taxRatePct={printData.taxRatePct}
+            timestamp={printData.timestamp}
+            settingsOverride={(settings as any) || null}
           />
         )}
       </div>
