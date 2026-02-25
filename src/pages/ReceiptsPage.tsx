@@ -248,22 +248,6 @@ const [printerPort, setPrinterPort] = useState(
   const [printData, setPrintData] = useState<PrintData | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
 
-  const runReprint = useCallback(async (data: PrintData, overrides?: PrinterOverrides) => {
-    setPrintData(data);
-    setIsPrinting(true);
-    try {
-      // Let React commit #receipt-print-area before printer pipeline reads it.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      await printReceiptSmart(toThermalPayload(data, settings as any), overrides);
-      toast.success("Print sent");
-    } catch (e: any) {
-      toast.error(e?.message || "Print failed");
-    } finally {
-      setTimeout(() => setIsPrinting(false), 700);
-    }
-  }, [settings]);
-
   const refreshBtDevices = useCallback(async () => {
     if (!isAndroid) return;
     const bt = (window as any)?.bluetoothSerial;
@@ -379,6 +363,22 @@ const [printerPort, setPrinterPort] = useState(
   const [formData, setFormData] = useState<StoreSettings>({});
   useEffect(() => {
     if (settings) setFormData(settings);
+  }, [settings]);
+
+  const runReprint = useCallback(async (data: PrintData, overrides?: PrinterOverrides) => {
+    setPrintData(data);
+    setIsPrinting(true);
+    try {
+      // Let React commit #receipt-print-area before printer pipeline reads it.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await printReceiptSmart(toThermalPayload(data, settings as any), overrides);
+      toast.success("Print sent");
+    } catch (e: any) {
+      toast.error(e?.message || "Print failed");
+    } finally {
+      setTimeout(() => setIsPrinting(false), 700);
+    }
   }, [settings]);
 
   // 2) Save settings

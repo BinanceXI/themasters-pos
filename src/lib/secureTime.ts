@@ -12,13 +12,9 @@ class SecureTimeService {
   private readonly SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
   private isInitialized: boolean = false;
 
-  // Time sources to try
-  private timeSources: TimeSource[] = [
-    {
-      url: 'https://worldtimeapi.org/api/timezone/Etc/UTC',
-      parseTime: (data) => new Date(data.utc_datetime).getTime()
-    },
-  ];
+  // WorldTimeAPI blocks browser CORS in production for this app origin.
+  // Fall back to the monotonic-drift protection path until a CORS-safe time source is added.
+  private timeSources: TimeSource[] = [];
 
   // Fallback: Use a calculated offset based on initial page load
   private initialLoadTime: number;

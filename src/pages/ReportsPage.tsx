@@ -282,6 +282,7 @@ async function fetchOrdersRemote(startISO: string, endISO: string): Promise<Orde
 }
 
 export const ReportsPage = () => {
+  const isMobile = useIsMobile();
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [rangeType, setRangeType] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('today');
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
@@ -565,10 +566,10 @@ export const ReportsPage = () => {
 
       {/* P4: This month widget */}
       <Card className="premium-surface border-white/10 dark:border-white/5">
-        <CardHeader className={cn("pb-3", useIsMobile() ? "p-4" : "")}>
-          <CardTitle className={cn("font-semibold", useIsMobile() ? "text-sm" : "text-base")}>This month (Revenue vs Expenses)</CardTitle>
+        <CardHeader className={cn("pb-3", isMobile ? "p-4" : "")}>
+          <CardTitle className={cn("font-semibold", isMobile ? "text-sm" : "text-base")}>This month (Revenue vs Expenses)</CardTitle>
         </CardHeader>
-        <CardContent className={cn(useIsMobile() ? "p-4 pt-0" : "")}>
+        <CardContent className={cn(isMobile ? "p-4 pt-0" : "")}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="rounded-xl border bg-card p-3">
               <div className="text-xs text-muted-foreground">Revenue</div>
@@ -745,25 +746,25 @@ export const ReportsPage = () => {
         
         {/* Payment Methods */}
         <Card className="premium-surface border-white/10 dark:border-white/5">
-          <CardHeader className={cn(useIsMobile() ? "p-4" : "")}>
-            <CardTitle className={cn("font-semibold", useIsMobile() ? "text-sm" : "text-base")}>Payment Methods</CardTitle>
+          <CardHeader className={cn(isMobile ? "p-4" : "")}>
+            <CardTitle className={cn("font-semibold", isMobile ? "text-sm" : "text-base")}>Payment Methods</CardTitle>
           </CardHeader>
-          <CardContent className={cn(useIsMobile() ? "p-4 pt-0" : "")}>
+          <CardContent className={cn(isMobile ? "p-4 pt-0" : "")}>
             <div className="grid grid-cols-3 gap-2 md:gap-4">
-              <div className={cn("rounded-xl bg-primary/10 border border-primary/20 text-center", useIsMobile() ? "p-2" : "p-4")}>
-                <Banknote className={cn("mx-auto mb-1 text-primary", useIsMobile() ? "w-4 h-4" : "w-6 h-6")} />
+              <div className={cn("rounded-xl bg-primary/10 border border-primary/20 text-center", isMobile ? "p-2" : "p-4")}>
+                <Banknote className={cn("mx-auto mb-1 text-primary", isMobile ? "w-4 h-4" : "w-6 h-6")} />
                 <p className="text-[9px] text-muted-foreground uppercase">Cash</p>
-                <p className={cn("font-bold text-primary", useIsMobile() ? "text-sm" : "text-lg")}>${stats.paymentMethods.cash.toFixed(0)}</p>
+                <p className={cn("font-bold text-primary", isMobile ? "text-sm" : "text-lg")}>${stats.paymentMethods.cash.toFixed(0)}</p>
               </div>
-              <div className={cn("rounded-xl bg-blue-500/10 border border-blue-500/20 text-center", useIsMobile() ? "p-2" : "p-4")}>
-                <CreditCard className={cn("mx-auto mb-1 text-blue-500", useIsMobile() ? "w-4 h-4" : "w-6 h-6")} />
+              <div className={cn("rounded-xl bg-blue-500/10 border border-blue-500/20 text-center", isMobile ? "p-2" : "p-4")}>
+                <CreditCard className={cn("mx-auto mb-1 text-blue-500", isMobile ? "w-4 h-4" : "w-6 h-6")} />
                 <p className="text-[9px] text-muted-foreground uppercase">Card</p>
-                <p className={cn("font-bold text-blue-500", useIsMobile() ? "text-sm" : "text-lg")}>${stats.paymentMethods.card.toFixed(0)}</p>
+                <p className={cn("font-bold text-blue-500", isMobile ? "text-sm" : "text-lg")}>${stats.paymentMethods.card.toFixed(0)}</p>
               </div>
-              <div className={cn("rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-center", useIsMobile() ? "p-2" : "p-4")}>
-                <Smartphone className={cn("mx-auto mb-1 text-indigo-500", useIsMobile() ? "w-4 h-4" : "w-6 h-6")} />
+              <div className={cn("rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-center", isMobile ? "p-2" : "p-4")}>
+                <Smartphone className={cn("mx-auto mb-1 text-indigo-500", isMobile ? "w-4 h-4" : "w-6 h-6")} />
                 <p className="text-[9px] text-muted-foreground uppercase">EcoCash</p>
-                <p className={cn("font-bold text-indigo-500", useIsMobile() ? "text-sm" : "text-lg")}>${stats.paymentMethods.ecocash.toFixed(0)}</p>
+                <p className={cn("font-bold text-indigo-500", isMobile ? "text-sm" : "text-lg")}>${stats.paymentMethods.ecocash.toFixed(0)}</p>
               </div>
             </div>
           </CardContent>
